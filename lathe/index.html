@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Centre Lathe &mdash; Why the Cutting Speed Keeps Changing</title>
+    <!-- Local vendored assets - runs fully offline, no CDN required -->
+    <script src="vendor/tailwind.js"></script>
+    <script src="vendor/three/three.min.js"></script>
+    <script src="vendor/three/OrbitControls.js"></script>
+    <link href="vendor/fontawesome.css" rel="stylesheet">
+    <link href="vendor/fonts.css" rel="stylesheet">
+    <style>
+        /* ---- Text size in the HTML chrome ------------------------- */
+        :root { --fs: 1.15; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+            color: #0f172a;
+            overflow-x: hidden;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        canvas { touch-action: none; }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #e2e8f0; }
+        ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            background: #e5e7eb;
+            height: 6px;
+            border-radius: 999px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px; width: 18px; border-radius: 50%;
+            background: #0f172a;
+            border: 2px solid #ffffff;
+            cursor: pointer;
+            box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(15, 23, 42, 0.25);
+            transition: transform 0.1s ease, background-color 0.2s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); background: #334155; }
+        input[type=range]:focus-visible::-webkit-slider-thumb {
+            box-shadow: 0 0 0 1px #e5e7eb, 0 0 0 4px rgba(15, 23, 42, 0.18);
+        }
+
+        /* ---- Loading veil ------------------------------------------- */
+        #loader {
+            position: fixed; inset: 0; z-index: 100;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 14px;
+            background: #f1f5f9;
+            transition: opacity .35s ease, visibility .35s ease;
+        }
+        #loader.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+        #loader .ring {
+            width: 38px; height: 38px; border-radius: 50%;
+            border: 3px solid #cbd5e1; border-top-color: #0f172a;
+            animation: loaderspin .8s linear infinite;
+        }
+        #loader .cap {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 13px; font-weight: 600; letter-spacing: .02em; color: #64748b;
+        }
+        @keyframes loaderspin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { #loader .ring { animation-duration: 2.4s; } }
+
+        .mseg.on, .sseg.on, .vseg.on, .bseg.on { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+        .sseg:disabled { cursor: default; }
+        .sseg.dim { opacity: .38; }
+
+        .glass-panel {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none bg-slate-100">
+
+    <div id="loader">
+        <div class="ring"></div>
+        <p class="cap">Loading Centre Lathe&hellip;</p>
+    </div>
+
+    <!-- The motor runs the whole time there is power; the cutting loop lays
+         over it only while the tool is in the metal. -->
+    <audio id="a-motor" src="vendor/audio/drill_motor.mp3" preload="auto" loop></audio>
+    <audio id="a-cut" src="vendor/audio/drill_metal.mp3" preload="auto" loop></audio>
+    <audio id="a-place" src="vendor/audio/change_material.mp3" preload="auto"></audio>
+    <audio id="a-bolt" src="vendor/audio/bolt_sound.mp3" preload="auto"></audio>
+
+    <header class="glass-panel sticky top-0 z-30 px-4 border-b border-slate-200 shrink-0">
+        <div class="max-w-[1800px] mx-auto flex items-center justify-between gap-4 py-2 flex-wrap">
+            <div class="flex items-center gap-3">
+                <div>
+                    <h1 class="text-[calc(19px*var(--fs))] font-black tracking-tight text-slate-900">
+                        Centre Lathe
+                    </h1>
+                    <p class="text-[calc(14px*var(--fs))] text-slate-500">Why the Cutting Speed Keeps Changing</p>
+                </div>
+            </div>
+
+            <div class="hidden sm:flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 text-[calc(16px*var(--fs))] text-slate-600">
+                <div title="How fast the chuck turns. Set by the gearbox, and fixed until you change it.">Spindle: <span id="stat-rpm" class="text-sky-600 font-bold">0</span> rpm</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="How fast the metal passes the tool. This is what the cutting edge feels, and on a lathe it falls away as the diameter comes down.">Cutting: <span id="stat-vc" class="text-emerald-600 font-bold">0</span> m/min</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="The force the tool pushes back with, set by how big a chip you are taking.">Force: <span id="stat-force" class="text-violet-600 font-bold">0</span> N</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="Power the cut is asking of the motor, against what the motor has.">Power: <span id="stat-power" class="text-amber-600 font-bold">0</span> W</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="The diameter the bar is at right now, where the tool is working.">&empty; now: <span id="stat-dia" class="text-rose-600 font-bold">0</span> mm</div>
+            </div>
+        </div>
+    </header>
+
+    <main class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+
+        <div class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+
+            <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
+                <div id="view3d" class="absolute inset-0"></div>
+
+                <div id="nogl" class="hidden absolute inset-0 z-20 items-center justify-center p-8 text-center">
+                    <p class="text-[calc(14px*var(--fs))] text-slate-600 max-w-md">This browser could not start 3D graphics (WebGL), so the lathe cannot be drawn. The readings and controls below still work.</p>
+                </div>
+
+                <!-- Said out loud when the machine will not do what is asked. -->
+                <div id="alarm" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md text-[calc(13px*var(--fs))] text-center max-w-lg">
+                    <b id="alarm-title"></b> <span id="alarm-body" class="opacity-90"></span>
+                </div>
+
+                <!-- Cutting speed against diameter, live. The lesson in one line. -->
+                <canvas id="graph" width="300" height="150"
+                        class="hidden absolute bottom-3 right-3 z-10 rounded-xl border border-slate-300 shadow-md"></canvas>
+            </div>
+
+            <div class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col xl:flex-row gap-2">
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 xl:w-[430px] shrink-0">
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-feed" class="font-semibold text-slate-700" title="How far the tool advances along the bar for every turn of the spindle. On a lathe the feed is per revolution, not per minute.">Feed</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-feed">0.25</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm/rev</span></span>
+                        </div>
+                        <input id="s-feed" type="range" min="0.05" max="0.4" step="0.05" value="0.25" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0.05 fine</span><span>f</span><span>0.40 coarse</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-depth" class="font-semibold text-slate-700" title="How deep the tool is set in. It takes this off the radius, so the diameter drops by twice as much.">Depth of Cut</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-depth">1.0</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
+                        </div>
+                        <input id="s-depth" type="range" min="0.25" max="3" step="0.25" value="1" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0.25 light</span><span>a<sub>p</sub></span><span>3.0 heavy</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-dia" class="font-semibold text-slate-700" title="The diameter of the bar you start with.">Stock &empty;</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-dia">50</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
+                        </div>
+                        <input id="s-dia" type="range" min="20" max="70" step="5" value="50" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>20 thin</span><span>D</span><span>70 fat</span></div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center justify-center xl:justify-start gap-2 flex-1 min-w-0">
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Turning takes the diameter down along the bar. Facing cuts the end square. Parting cuts the piece off.">Operation</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="oseg on px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-op="turn">Turn</button>
+                            <button class="oseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-op="face">Face</button>
+                            <button class="oseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-op="part">Part Off</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center">Material</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="mseg on px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="alu">Aluminium</button>
+                            <button class="mseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="brass">Brass</button>
+                            <button class="mseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="steel">Mild Steel</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Which pair of gears the headstock is set to. This is the only thing that sets the spindle speed.">Spindle Speed</div>
+                        <div class="flex items-center justify-center gap-1" id="speed-row"></div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center">View</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="vseg on px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="bench">Bench</button>
+                            <button class="vseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="all" title="Chuck, bar and tool all in one frame.">All</button>
+                            <button class="vseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="tool">Tool</button>
+                            <button class="vseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="front">Front</button>
+                            <button class="vseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="end">End</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-2 pb-2 bg-slate-50/90 flex flex-wrap items-center justify-center xl:justify-start gap-2">
+                <button id="btn-run" class="px-4 py-2 rounded-full border font-bold text-[calc(13px*var(--fs))] transition bg-slate-900 text-white border-slate-900 flex items-center gap-2">
+                    <i class="fa-solid fa-play text-[calc(11px*var(--fs))]"></i><span id="run-label">Cut</span>
+                </button>
+                <button id="btn-reset" class="px-4 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 font-bold text-[calc(13px*var(--fs))] transition flex items-center gap-2">
+                    <i class="fa-solid fa-rotate-left text-[calc(11px*var(--fs))]"></i>Reset
+                </button>
+                <label id="chip-fast" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Four times speed, for the long passes.">
+                    <input id="chk-fast" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer"><span>Fast</span>
+                </label>
+                <label id="chip-slow" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Quarter speed, to watch the chip form.">
+                    <input id="chk-slow" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer"><span>Slow</span>
+                </label>
+                <label id="chip-chips" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show the swarf the cut throws off.">
+                    <input id="chk-chips" type="checkbox" class="accent-slate-900" checked><span>Swarf</span>
+                </label>
+                <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Sound: the note follows the spindle speed.">
+                    <input id="chk-sound" type="checkbox" class="accent-slate-900" checked><span>Sound</span>
+                </label>
+                <label id="chip-trace" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Draw the cutting speed against diameter as the cut goes on.">
+                    <input id="chk-trace" type="checkbox" class="accent-slate-900"><span>Graph</span>
+                </label>
+                <label id="chip-mesh" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show mesh: draw every surface as the triangles it is really made of.">
+                    <input id="chk-mesh" type="checkbox" class="accent-slate-900"><span>Mesh</span>
+                </label>
+                <label id="chip-spin" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none">
+                    <input id="chk-spin" type="checkbox" class="accent-slate-900"><span>Spin</span>
+                </label>
+                <label id="chip-view-mode" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Dark: put the lathe on a dark ground.">
+                    <input id="chk-view-mode" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer" checked><span><span id="txt-view-mode">Light</span></span>
+                </label>
+                <button id="btn-info" class="p-2 w-9 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition" title="Learning outcomes and the physics" aria-label="Learning outcomes">
+                    <i class="fa-solid fa-info"></i>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- ============================ Learning outcomes ==================== -->
+    <div id="info-modal" class="hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm p-4 sm:p-8 overflow-y-auto">
+        <div class="max-w-3xl mx-auto bg-white rounded-2xl shadow-2xl border border-slate-200">
+            <div class="sticky top-0 bg-white border-b border-slate-200 px-5 py-3 flex items-center justify-between rounded-t-2xl">
+                <h2 class="text-[calc(17px*var(--fs))] font-black text-slate-900">What this machine teaches</h2>
+                <button id="btn-info-close" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 text-[calc(12px*var(--fs))] font-bold">Close</button>
+            </div>
+
+            <div class="px-5 py-4 space-y-4 text-[calc(13px*var(--fs))] text-slate-700 leading-relaxed">
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">1. The one thing a lathe teaches that a drill cannot</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>On a drill the tool spins and the work is still. On a lathe it is the other way round: the <b>work</b> spins and the tool is still. What is being cut is the outside of a turning bar.</li>
+                        <li>That single swap changes everything, because the cutting speed depends on the diameter <b>where the tool is</b> &mdash; and on a lathe that diameter is the thing you are busy changing.</li>
+                        <li><span class="mono">V<sub>c</sub> = &pi; &times; D &times; n</span>. On the drill, D was fixed by whichever bit was in the chuck. Here, every pass makes D smaller, so <b>the cutting speed falls away under you</b> even though the spindle speed has not moved.</li>
+                        <li>Turn a 60 mm bar down to 20 mm at one speed and watch the reading: the edge ends up going a third as fast as it started. To keep cutting properly you have to <b>change gear part way through the job</b>. That is not a fault; that is turning.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">2. Facing: where the cutting speed goes to nothing</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>Facing cuts the end of the bar square, with the tool travelling <b>inwards</b> from the rim to the centre.</li>
+                        <li>As it goes in, D falls to zero &mdash; so <span class="mono">V<sub>c</sub></span> falls to zero with it. <b>At the very centre the metal is not moving past the tool at all.</b></li>
+                        <li>Watch the last millimetre. The tool stops cutting and starts rubbing, and that little pip left in the middle of a faced end is something you can find on real work.</li>
+                        <li>It is the cleanest demonstration there is that <span class="mono">v = &omega;r</span>: same rotation everywhere, no speed at the axis.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">3. Feed per revolution &mdash; and why time behaves differently here</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>On the drill the feed was in millimetres a minute, and the time was thickness &divide; feed. Spinning faster did not drill the hole any faster.</li>
+                        <li>On a lathe the feed is in <b>millimetres per revolution</b> &mdash; the tool advances a set amount each time the work goes round. So
+                            <span class="mono">t = length &divide; (f &times; n)</span>.</li>
+                        <li>Now <b>n is in the time</b>. Double the spindle speed and the job takes half as long. That is the opposite of the drill, and it is worth stopping on: the same-looking quantity behaves differently because of how the feed is defined.</li>
+                        <li>But doubling n also doubles V<sub>c</sub>. Speed helps you two ways and hurts you one, which is the whole trade of machining.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">4. The chip, the force and the power</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The tool is peeling a ribbon whose cross-section is <b>feed &times; depth of cut</b>. That area is what sets how hard the cut is.</li>
+                        <li><span class="mono">F<sub>c</sub> = k<sub>c</sub> &times; f &times; a<sub>p</sub></span> &mdash; k<sub>c</sub> is how hard the material is to shear, so steel asks about three times what aluminium does for the same chip.</li>
+                        <li>That force acts at the <b>radius</b> of the work, so the spindle sees <span class="mono">&tau; = F<sub>c</sub> &times; D &divide; 2</span>. A fat bar is harder on the gearbox than a thin one for the very same cut.</li>
+                        <li>And the power it costs is <span class="mono">P = F<sub>c</sub> &times; V<sub>c</sub></span>. Take too big a bite and the motor cannot supply it: the reading goes red and the spindle drags to a stop.</li>
+                        <li>Depth of cut comes off the <b>radius</b>. Set 1 mm and the diameter drops by 2 mm. Getting that wrong is how a part ends up half the size it should be.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">Things to try</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Watch the speed fall.</b> Put a 70 mm bar in mild steel, pick the speed that gives about 30 m/min, and take pass after pass. How many passes before the cutting speed has halved? What do you have to do about it?</li>
+                        <li><b>Face to the centre.</b> Switch to Face and watch the cutting-speed reading as the tool goes in. Where does it reach zero, and what is the tool doing at that moment?</li>
+                        <li><b>Prove the time rule.</b> Time one pass. Double the spindle speed and predict the new time before you run it. Then go back to the drill simulation and try the same prediction there &mdash; it does not work, and the reason is in the units of the feed.</li>
+                        <li><b>Find the motor&rsquo;s limit.</b> On steel, wind the depth of cut up a quarter of a millimetre at a time until it stalls. Now do it on aluminium. Why is the answer different, and by roughly what factor?</li>
+                        <li><b>Same cut, different bar.</b> Take an identical cut on a 70 mm bar and a 25 mm bar. The chip is the same size and the force is the same &mdash; so why does the fat bar load the spindle so much more?</li>
+                    </ul>
+                </section>
+
+                <details class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <summary class="cursor-pointer font-bold text-slate-800">Physics behind the simulation</summary>
+                    <div class="pt-2 space-y-3">
+                        <div>
+                            <p class="mono text-slate-900">V<sub>c</sub> = &pi; &times; D &times; n &divide; 1000</p>
+                            <p class="text-slate-500">Cutting speed in metres a minute, for D in mm at the tool and n in rev/min. D changes as you cut.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">A = f &times; a<sub>p</sub></p>
+                            <p class="text-slate-500">Cross-section of the chip: feed per revolution times depth of cut.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">F<sub>c</sub> = k<sub>c</sub> &times; A</p>
+                            <p class="text-slate-500">Cutting force, from the material&rsquo;s specific cutting force.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">&tau; = F<sub>c</sub> &times; D &divide; 2</p>
+                            <p class="text-slate-500">Torque at the spindle. The same force at a bigger radius is a bigger moment.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">P = F<sub>c</sub> &times; V<sub>c</sub> &divide; 60</p>
+                            <p class="text-slate-500">Cutting power in watts, for F in newtons and V<sub>c</sub> in m/min.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">t = L &divide; (f &times; n)</p>
+                            <p class="text-slate-500">Time for one pass, in minutes. The spindle speed is in this one &mdash; unlike drilling.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">D<sub>new</sub> = D &minus; 2a<sub>p</sub></p>
+                            <p class="text-slate-500">Depth of cut is taken off the radius, so the diameter falls twice as fast.</p>
+                        </div>
+                    </div>
+                </details>
+
+                <p class="text-[calc(12px*var(--fs))] text-slate-400">
+                    A teaching model, not a machining handbook: cutting forces use a single specific-force figure per
+                    material and ignore tool geometry, nose radius, rake, built-up edge and tool wear.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // =============================================================
+        //  Centre Lathe
+        // =============================================================
+        // The whole simulation turns on one fact that a drilling machine can
+        // never show you: on a lathe the DIAMETER is the thing being changed,
+        // and the cutting speed depends on it. So the speed the edge sees is
+        // not a setting — it is a consequence, and it moves while you work.
+        //
+        // Everything is in millimetres, revs per minute and newtons: the units
+        // off a workshop chart, so the readings are the ones a machinist reads.
+
+        const MOTOR_W = 550;                  // a bench centre lathe
+        const DRIVE_EFF = 0.90;               // what survives the gears and belt
+
+        // The headstock gear positions. A lathe has no continuous speed
+        // control: you get these and nothing in between, which is exactly why
+        // "the right speed" is usually a compromise.
+        const SPEEDS = [70, 130, 240, 430, 800, 1400];
+
+        // Specific cutting force, in newtons per square millimetre of chip,
+        // and the speed a high-speed-steel edge survives in that material.
+        const MATS = {
+            alu:   { name: 'Aluminium',  kc: 600,  vc: 120, hex: 0xc9ced6, chip: 0xdfe3e8, rough: 0.34, metal: 0.72 },
+            brass: { name: 'Brass',      kc: 900,  vc: 70,  hex: 0xb9993f, chip: 0xd6b657, rough: 0.30, metal: 0.78 },
+            steel: { name: 'Mild Steel', kc: 1900, vc: 30,  hex: 0x8b939e, chip: 0x6f7783, rough: 0.42, metal: 0.62 }
+        };
+
+        const DEFAULTS = { feed: 0.25, depth: 1.0, dia: 50 };
+        const P = Object.assign({}, DEFAULTS);
+
+        const state = {
+            // aluminium at 800 rpm is a well-set-up cut: 126 m/min against a
+            // wanted 120, and 314 W of the 495 available. Somewhere to start.
+            mat: 'alu', speed: 4, op: 'turn',
+            running: false, done: false,
+            power: false,                     // off until someone starts it
+            spin: 0,                          // spindle angle, radians
+            spinRpm: 0,                       // what it is really doing
+            stalled: false,
+            toolX: 0, toolR: 0,               // where the tool tip is
+            cutting: false,
+            cut: 0,                           // mm of travel made this pass
+            passes: 0,
+            elapsed: 0,
+            setupT: 1,                        // 0..1 while fresh stock is loaded
+            fast: false, slow: false,
+            chips: true, sound: true, trace: false,
+            mesh: false, turntable: false,
+            viewMode: 'blueprint'
+        };
+
+        const $ = id => document.getElementById(id);
+        const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+        // ---- the chain of consequences ----------------------------------
+        const M = () => MATS[state.mat];
+        const rpm = () => SPEEDS[state.speed];
+        const omega = () => 2 * Math.PI * rpm() / 60;            // rad/s
+
+        // THE diameter that matters: the one under the tool right now, not the
+        // one the bar started at. This is the whole lesson in one function.
+        function liveDia() {
+            if (!rad.length) return P.dia;
+            if (state.op === 'turn') return 2 * radiusAt(state.toolX);
+            return 2 * state.toolR;           // facing and parting work inwards
+        }
+        const cutSpeed = () => Math.PI * liveDia() * rpm() / 1000;   // m/min
+        const idealRpm = () => M().vc * 1000 / (Math.PI * Math.max(1, liveDia()));
+        const speedRatio = () => cutSpeed() / M().vc;
+
+        // The chip: feed per revolution by depth of cut. That area is what the
+        // whole of the cutting force comes from.
+        const chipArea = () => P.feed * P.depth;                 // mm²
+        const cutForce = () => M().kc * chipArea();              // N
+        // The force acts out at the radius, so a fat bar loads the spindle
+        // harder than a thin one for exactly the same chip.
+        const cutTorque = () => cutForce() * liveDia() / 2000;   // N·m
+        const cutPower = () => cutForce() * cutSpeed() / 60;     // W
+
+        const motorTorque = () => MOTOR_W * DRIVE_EFF / Math.max(0.1, omega());
+        const availPower = () => MOTOR_W * DRIVE_EFF;
+        const overloaded = () => cutPower() > availPower();
+
+        // On a lathe the feed is per REVOLUTION, so the spindle speed is in
+        // the time — the opposite of drilling, where it was not.
+        const feedRate = () => P.feed * rpm();                   // mm/min
+        const passLength = () => state.op === 'turn' ? (CUT_X1 - CUT_X0) : P.dia / 2;
+        const passTime = () => passLength() / Math.max(0.001, feedRate()) * 60;   // s
+        const mrr = () => cutSpeed() * P.feed * P.depth * 1000;  // mm³/min
+
+        // =============================================================
+        //  The machine, in three dimensions
+        // =============================================================
+        // The lathe axis runs along x with the headstock at the left. The work
+        // turns about that axis; the tool sits at centre height on the near
+        // side and comes in from +z. The saddle travels in x, the cross-slide
+        // in z — which is exactly the pair of slides on the real machine.
+        const AXIS_Y = 300;                   // centre height above the floor
+        const BED_X0 = -350, BED_X1 = 460;    // the bed, headstock end to tailstock end
+        const BED_TOP = 210;
+        const HEAD_X0 = -330, HEAD_X1 = -92;  // the headstock sits on the left of it
+        const CHUCK_L = 92;                   // the chuck hangs off the spindle nose
+        const CHUCK_FACE = 0;                 // and the bar starts at its face
+        const BAR_L = 110;                    // how far the bar sticks out
+        const JAW_L = 22;                     // how much of it the chuck holds
+        const CUT_X0 = JAW_L + 8, CUT_X1 = BAR_L - 4;   // the tool's travel
+        const TAIL_X = 330;
+        // Heights of the slide stack. Every one of these has to stay under the
+        // work, or the casting drives straight through the bar.
+        const SADDLE_TOP = BED_TOP + 30;      // 240
+        const CROSS_TOP = SADDLE_TOP + 22;    // 262 — below the biggest bar
+        const COMP_TOP = CROSS_TOP + 18;      // 280
+        // and how far forward of the cutting edge everything else must sit
+        const TIP_Z = 18, SHANK_Z = 98, POST_Z0 = 45, COMP_Z0 = 40;
+
+        let scene, camera, renderer, controls;
+        let floor3, grid3, workGrp, workMesh, chuckGrp, spindleGrp;
+        let saddleGrp, crossGrp, toolGrp, toolTip, tailGrp, lampMesh;
+        let chipGrp = null, chips = [], chuckJaws = [];
+        let offcut = null, offcutV = 0;
+        let gl = false;
+        const MAT = {};
+
+        // ---- the bar, as a profile that the tool eats into ---------------
+        // The workpiece is a row of radii sampled along its length. Every
+        // operation reduces radii; that one rule covers turning, facing and
+        // parting, because all three are the tool sweeping through metal.
+        const NSEG = 132;
+        const dx = () => BAR_L / NSEG;
+        let rad = [];
+        function freshBar() {
+            rad = new Array(NSEG + 1).fill(P.dia / 2);
+        }
+        const xAt = i => i * dx();
+        function radiusAt(x) {
+            const i = clamp(Math.round(x / dx()), 0, NSEG);
+            return rad[i];
+        }
+        // Take metal off everywhere the tool body currently is.
+        function removeAt(x0, x1, r) {
+            let cutAny = false;
+            const i0 = clamp(Math.floor(x0 / dx()), 0, NSEG);
+            const i1 = clamp(Math.ceil(x1 / dx()), 0, NSEG);
+            for (let i = i0; i <= i1; i++) {
+                if (rad[i] > r) { rad[i] = r; cutAny = true; }
+            }
+            return cutAny;
+        }
+        // how much is left of the bar, for the readouts
+        const maxRadius = () => rad.reduce((a, b) => Math.max(a, b), 0);
+
+        // ---- decals and surfaces ----------------------------------------
+        function roundedBox(w, h, d, r) {
+            const bev = Math.min(1.5, w / 6, h / 6, d / 6);
+            const sh = new THREE.Shape();
+            const W = w / 2 - bev, H = h / 2 - bev, rr = Math.max(0.1, Math.min(r, W, H));
+            sh.moveTo(-W + rr, -H);
+            sh.lineTo(W - rr, -H); sh.quadraticCurveTo(W, -H, W, -H + rr);
+            sh.lineTo(W, H - rr);  sh.quadraticCurveTo(W, H, W - rr, H);
+            sh.lineTo(-W + rr, H); sh.quadraticCurveTo(-W, H, -W, H - rr);
+            sh.lineTo(-W, -H + rr); sh.quadraticCurveTo(-W, -H, -W + rr, -H);
+            return new THREE.ExtrudeGeometry(sh, {
+                depth: d - bev * 2, bevelEnabled: true, bevelThickness: bev,
+                bevelSize: bev, bevelSegments: 2, curveSegments: 6
+            }).translate(0, 0, -(d - bev * 2) / 2);
+        }
+
+        // The speed chart bolted to the headstock, with the gear you are in
+        // picked out. A real lathe carries this because you cannot work the
+        // speed out in your head every time the diameter changes.
+        let speedTex = null, speedCv = null;
+        function drawSpeeds() {
+            if (!speedCv) { speedCv = document.createElement('canvas'); speedCv.width = 320; speedCv.height = 260; }
+            const c = speedCv.getContext('2d');
+            c.fillStyle = '#14181d'; c.fillRect(0, 0, 320, 260);
+            c.fillStyle = '#c9d2dd'; c.font = 'bold 26px sans-serif'; c.textAlign = 'center';
+            c.fillText('SPINDLE  r/min', 160, 34);
+            for (let i = 0; i < SPEEDS.length; i++) {
+                const y = 52 + i * 33, on = i === state.speed;
+                if (on) { c.fillStyle = '#d24b2f'; c.fillRect(12, y, 296, 29); }
+                c.fillStyle = on ? '#ffffff' : '#9aa5b1';
+                c.font = (on ? 'bold ' : '') + '21px sans-serif';
+                c.textAlign = 'left';  c.fillText(String.fromCharCode(65 + i), 28, y + 22);
+                c.textAlign = 'right'; c.fillText(SPEEDS[i], 292, y + 22);
+            }
+            if (speedTex) speedTex.needsUpdate = true;
+        }
+        function badgeTexture() {
+            const c = document.createElement('canvas');
+            c.width = 448; c.height = 116;
+            const g = c.getContext('2d');
+            g.fillStyle = '#b5301f'; g.fillRect(0, 0, 448, 116);
+            g.fillStyle = '#ffffff'; g.font = 'bold 58px Inter, sans-serif';
+            g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.fillText('TCE LAB', 224, 60);
+            return new THREE.CanvasTexture(c);
+        }
+        let knurlTex = null;
+        function knurlTexture() {
+            if (knurlTex) return knurlTex;
+            const c = document.createElement('canvas');
+            c.width = 256; c.height = 32;
+            const g = c.getContext('2d');
+            g.fillStyle = '#808790'; g.fillRect(0, 0, 256, 32);
+            for (let i = 0; i < 52; i++) {
+                const x = i * 256 / 52;
+                g.fillStyle = '#ffffff'; g.fillRect(x, 3, 2.6, 26);
+                g.fillStyle = '#2b3038'; g.fillRect(x + 2.6, 3, 1.8, 26);
+            }
+            knurlTex = new THREE.CanvasTexture(c);
+            knurlTex.wrapS = knurlTex.wrapT = THREE.RepeatWrapping;
+            return knurlTex;
+        }
+        // A turned surface is covered in fine tool marks running round it —
+        // the helix the tool leaves at one thou a rev.
+        const barTex = {};
+        function barTexture(kind) {
+            if (barTex[kind]) return barTex[kind];
+            const c = document.createElement('canvas');
+            c.width = 32; c.height = 256;
+            const g = c.getContext('2d');
+            const base = { alu: '#c9ced6', brass: '#b9993f', steel: '#8b939e' }[kind];
+            g.fillStyle = base; g.fillRect(0, 0, 32, 256);
+            for (let i = 0; i < 256; i += 3) {
+                g.fillStyle = 'rgba(0,0,0,' + (0.05 + Math.random() * 0.10) + ')';
+                g.fillRect(0, i, 32, 1);
+                g.fillStyle = 'rgba(255,255,255,' + (0.04 + Math.random() * 0.10) + ')';
+                g.fillRect(0, i + 1, 32, 1);
+            }
+            const t = new THREE.CanvasTexture(c);
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.repeat.set(1, 6);
+            barTex[kind] = t;
+            return t;
+        }
+
+        function init3D() {
+            const host = $('view3d');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf1f5f9);
+
+            camera = new THREE.PerspectiveCamera(42, 1, 20, 9000);
+            camera.position.set(700, 700, 900);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            host.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.minDistance = 150;
+            controls.maxDistance = 4000;
+            controls.maxPolarAngle = Math.PI / 2 + 0.02;
+            controls.autoRotateSpeed = 0.9;
+            controls.target.set(80, 260, 0);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.26));
+            const key = new THREE.DirectionalLight(0xffffff, 0.72);
+            key.position.set(600, 1200, 900);
+            key.castShadow = true;
+            key.shadow.mapSize.width = key.shadow.mapSize.height = 2048;
+            key.shadow.camera.left = -900; key.shadow.camera.right = 900;
+            key.shadow.camera.top = 900; key.shadow.camera.bottom = -300;
+            key.shadow.camera.far = 3600;
+            key.shadow.bias = -0.0006;
+            scene.add(key);
+            const fill = new THREE.DirectionalLight(0xbfd4f0, 0.24);
+            fill.position.set(-900, 700, -700); scene.add(fill);
+            const rim = new THREE.DirectionalLight(0xffffff, 0.26);
+            rim.position.set(200, 500, -1300); scene.add(rim);
+
+            floor3 = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000),
+                new THREE.MeshStandardMaterial({ color: 0xdbe1ea, roughness: 0.92 }));
+            floor3.rotation.x = -Math.PI / 2;
+            floor3.position.y = -1;
+            floor3.receiveShadow = true;
+            scene.add(floor3);
+            grid3 = new THREE.GridHelper(6000, 60, 0x94a3b8, 0xcbd5e1);
+            scene.add(grid3);
+
+            // Metal shows you its surroundings and little else, so without
+            // something to reflect it renders black. A workshop in a few
+            // strokes: bright ceiling, two strip lights, a darker floor.
+            const ec = document.createElement('canvas');
+            ec.width = 256; ec.height = 128;
+            const eg = ec.getContext('2d');
+            const sky = eg.createLinearGradient(0, 0, 0, 128);
+            sky.addColorStop(0, '#9fa9b6'); sky.addColorStop(0.42, '#7d8794');
+            sky.addColorStop(0.52, '#525a66'); sky.addColorStop(1, '#2e343c');
+            eg.fillStyle = sky; eg.fillRect(0, 0, 256, 128);
+            eg.fillStyle = '#ffffff';
+            eg.fillRect(28, 10, 88, 13); eg.fillRect(150, 10, 88, 13);
+            const pm = new THREE.PMREMGenerator(renderer);
+            pm.compileEquirectangularShader();
+            const et = new THREE.CanvasTexture(ec);
+            et.mapping = THREE.EquirectangularReflectionMapping;
+            scene.environment = pm.fromEquirectangular(et).texture;
+            et.dispose(); pm.dispose();
+
+            MAT.cast   = new THREE.MeshStandardMaterial({ color: 0x5d6b63, roughness: 0.6, metalness: 0.18 });
+            MAT.cast2  = new THREE.MeshStandardMaterial({ color: 0x4d5a53, roughness: 0.64, metalness: 0.16 });
+            MAT.way    = new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.96, roughness: 0.10 });
+            MAT.mach   = new THREE.MeshStandardMaterial({ color: 0x8d9299, roughness: 0.34, metalness: 0.62 });
+            MAT.steel  = new THREE.MeshStandardMaterial({ color: 0xb9bfc9, metalness: 0.68, roughness: 0.22 });
+            MAT.dark   = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.6, metalness: 0.2 });
+            MAT.motor  = new THREE.MeshStandardMaterial({ color: 0x3d434c, roughness: 0.44, metalness: 0.46 });
+            MAT.chuck  = new THREE.MeshStandardMaterial({ color: 0x707881, roughness: 0.38, metalness: 0.72 });
+            MAT.tool   = new THREE.MeshStandardMaterial({ color: 0xd6a933, metalness: 0.78, roughness: 0.28 });
+            MAT.carbide= new THREE.MeshStandardMaterial({ color: 0x33383f, metalness: 0.5, roughness: 0.32 });
+            MAT.tray   = new THREE.MeshStandardMaterial({ color: 0x46524b, roughness: 0.7, metalness: 0.14 });
+
+            MAT.cast.envMapIntensity = MAT.cast2.envMapIntensity = 0.24;
+            MAT.way.envMapIntensity = 2.0;
+            MAT.mach.envMapIntensity = 1.3;
+            MAT.steel.envMapIntensity = 1.2;
+            MAT.chuck.envMapIntensity = 1.1;
+            MAT.tool.envMapIntensity = 1.25;
+            MAT.motor.envMapIntensity = 0.8;
+            MAT.dark.envMapIntensity = 0.4;
+
+            buildMachine();
+            freshBar();
+            buildBar();
+        }
+
+        function buildMachine() {
+            // --- stand, chip tray and bed -------------------------------
+            [[-70, 190], [400, 150]].forEach(([px, pw]) => {
+                const plinth = new THREE.Mesh(roundedBox(pw, 132, 230, 8), MAT.cast2);
+                plinth.position.set(px, 66, -10);
+                plinth.castShadow = plinth.receiveShadow = true; scene.add(plinth);
+            });
+            const tray = new THREE.Mesh(roundedBox(BED_X1 - BED_X0 + 90, 22, 260, 6), MAT.tray);
+            tray.position.set((BED_X0 + BED_X1) / 2, 143, -6);
+            tray.castShadow = tray.receiveShadow = true; scene.add(tray);
+
+            const bedL = BED_X1 - BED_X0;
+            const bed = new THREE.Mesh(roundedBox(bedL, 56, 150, 6), MAT.cast);
+            bed.position.set((BED_X0 + BED_X1) / 2, BED_TOP - 28, 0);
+            bed.castShadow = bed.receiveShadow = true; scene.add(bed);
+            // the two ground ways the saddle slides on, kept bright by use
+            [-46, 46].forEach(wz => {
+                const way = new THREE.Mesh(roundedBox(bedL, 12, 34, 2), MAT.way);
+                way.position.set((BED_X0 + BED_X1) / 2, BED_TOP + 5, wz);
+                way.castShadow = true; scene.add(way);
+            });
+
+            // --- headstock, and the gear chart on the front of it --------
+            const headMid = (HEAD_X0 + HEAD_X1) / 2;
+            const head = new THREE.Mesh(roundedBox(HEAD_X1 - HEAD_X0, 168, 168, 14), MAT.cast);
+            head.position.set(headMid, AXIS_Y - 16, -6);
+            head.castShadow = true; scene.add(head);
+            const headTop = new THREE.Mesh(roundedBox(HEAD_X1 - HEAD_X0 - 40, 26, 150, 8), MAT.cast2);
+            headTop.position.set(headMid, AXIS_Y + 80, -6);
+            headTop.castShadow = true; scene.add(headTop);
+            // the spindle nose the chuck screws onto, bridging the gap
+            const nose = new THREE.Mesh(new THREE.CylinderGeometry(34, 34, 26, 22), MAT.mach);
+            nose.rotation.z = Math.PI / 2;
+            nose.position.set(HEAD_X1 + 6, AXIS_Y, 0); scene.add(nose);
+
+            speedTex = new THREE.CanvasTexture((drawSpeeds(), speedCv));
+            const chart = new THREE.Mesh(new THREE.PlaneGeometry(104, 84),
+                new THREE.MeshStandardMaterial({ map: speedTex, roughness: 0.45 }));
+            chart.position.set(headMid - 60, AXIS_Y - 4, 79); scene.add(chart);
+            const badge = new THREE.Mesh(new THREE.PlaneGeometry(92, 24),
+                new THREE.MeshStandardMaterial({ map: badgeTexture(), roughness: 0.4 }));
+            badge.position.set(headMid + 56, AXIS_Y + 42, 79); scene.add(badge);
+
+            // the running light: green while the spindle turns, red when the
+            // cut has stopped it
+            const bezel = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 9, 20), MAT.mach);
+            bezel.rotation.x = Math.PI / 2;
+            bezel.position.set(headMid + 56, AXIS_Y - 22, 77); scene.add(bezel);
+            MAT.lamp = new THREE.MeshStandardMaterial({
+                color: 0x1c8f4a, emissive: 0x22c55e, emissiveIntensity: 1.1,
+                roughness: 0.25, metalness: 0 });
+            lampMesh = new THREE.Mesh(new THREE.SphereGeometry(7.5, 18, 14), MAT.lamp);
+            lampMesh.position.set(headMid + 56, AXIS_Y - 22, 82); scene.add(lampMesh);
+
+            // the two speed levers on the headstock top
+            [[headMid - 50, 0.5], [headMid + 30, -0.35]].forEach(([lx, tilt]) => {
+                const boss = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 16, 16), MAT.cast2);
+                boss.position.set(lx, AXIS_Y + 93, 30); scene.add(boss);
+                const lev = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 62, 12), MAT.mach);
+                lev.position.set(lx, AXIS_Y + 122, 30 + Math.sin(tilt) * 18);
+                lev.rotation.x = tilt; lev.castShadow = true; scene.add(lev);
+                const knob = new THREE.Mesh(new THREE.SphereGeometry(10, 14, 12), MAT.dark);
+                knob.position.set(lx, AXIS_Y + 151, 30 + Math.sin(tilt) * 36); scene.add(knob);
+            });
+
+            // --- motor, slung behind the headstock ----------------------
+            const mot = new THREE.Mesh(new THREE.CylinderGeometry(56, 56, 130, 28), MAT.motor);
+            mot.rotation.z = Math.PI / 2;
+            mot.position.set(headMid - 25, AXIS_Y - 34, -140);
+            mot.castShadow = true; scene.add(mot);
+            const motCap = new THREE.Mesh(new THREE.CylinderGeometry(46, 56, 20, 28), MAT.motor);
+            motCap.rotation.z = Math.PI / 2;
+            motCap.position.set(headMid - 100, AXIS_Y - 34, -140); scene.add(motCap);
+            for (let k = 0; k < 16; k++) {
+                const a = k / 16 * Math.PI * 2;
+                const sl = new THREE.Mesh(new THREE.BoxGeometry(44, 10, 3), MAT.dark);
+                sl.position.set(headMid - 50, AXIS_Y - 34 + Math.sin(a) * 55, -140 + Math.cos(a) * 55);
+                sl.rotation.x = -a; scene.add(sl);
+            }
+
+            // --- spindle and the three-jaw chuck ------------------------
+            spindleGrp = new THREE.Group();
+            spindleGrp.position.set(0, AXIS_Y, 0);
+            scene.add(spindleGrp);
+            chuckGrp = new THREE.Group();
+            spindleGrp.add(chuckGrp);
+            // the chuck body, turned as one casting
+            const cprof = [[26, -CHUCK_L], [72, -CHUCK_L], [78, -CHUCK_L + 8], [80, -CHUCK_L + 26],
+                           [80, -18], [76, -8], [74, 0], [26, 0], [0, 0]];
+            const chBody = new THREE.Mesh(
+                new THREE.LatheGeometry(cprof.map(p => new THREE.Vector2(p[0], p[1])), 44)
+                    .rotateZ(-Math.PI / 2), MAT.chuck);
+            chBody.castShadow = true; chuckGrp.add(chBody);
+            // the scroll ring, knurled, and the three key sockets
+            const scroll = new THREE.Mesh(new THREE.CylinderGeometry(81, 81, 26, 44),
+                new THREE.MeshStandardMaterial({ color: 0x5f666f, metalness: 0.6, roughness: 0.36,
+                                                 bumpMap: knurlTexture(), bumpScale: 1.1 }));
+            scroll.rotation.z = Math.PI / 2;
+            scroll.position.x = -CHUCK_L + 48; chuckGrp.add(scroll);
+            for (let k = 0; k < 3; k++) {
+                const a = k / 3 * Math.PI * 2;
+                const sock = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 10, 12), MAT.dark);
+                sock.position.set(-CHUCK_L + 48, Math.cos(a) * 76, Math.sin(a) * 76);
+                sock.rotation.z = Math.PI / 2; sock.rotation.x = -a; chuckGrp.add(sock);
+            }
+            // and the three jaws, stepped, gripping the bar
+            chuckJaws = [];
+            for (let k = 0; k < 3; k++) {
+                const a = k / 3 * Math.PI * 2 + Math.PI / 6;
+                const jaw = new THREE.Group();
+                const body = new THREE.Mesh(roundedBox(28, 30, 34, 2), MAT.mach);
+                body.position.set(-13, 0, 0); jaw.add(body);
+                const step = new THREE.Mesh(roundedBox(20, 22, 26, 2), MAT.mach);
+                step.position.set(6, 0, 0); jaw.add(step);
+                jaw.position.set(0, 0, 0);
+                jaw.userData.a = a;
+                jaw.castShadow = true;
+                chuckGrp.add(jaw);
+                chuckJaws.push(jaw);
+            }
+
+            // --- tailstock, parked clear of the work --------------------
+            tailGrp = new THREE.Group();
+            tailGrp.position.set(TAIL_X, 0, 0);
+            const tBase = new THREE.Mesh(roundedBox(150, 40, 130, 6), MAT.cast);
+            tBase.position.set(0, BED_TOP + 26, 0);
+            tBase.castShadow = true; tailGrp.add(tBase);
+            const tBody = new THREE.Mesh(roundedBox(140, 96, 104, 10), MAT.cast);
+            tBody.position.set(6, AXIS_Y - 8, 0);
+            tBody.castShadow = true; tailGrp.add(tBody);
+            const barrel = new THREE.Mesh(new THREE.CylinderGeometry(21, 21, 96, 22), MAT.way);
+            barrel.rotation.z = Math.PI / 2;
+            barrel.position.set(-72, AXIS_Y, 0);
+            barrel.castShadow = true; tailGrp.add(barrel);
+            const centre = new THREE.Mesh(new THREE.ConeGeometry(19, 44, 22), MAT.mach);
+            centre.rotation.z = Math.PI / 2;
+            centre.position.set(-142, AXIS_Y, 0); tailGrp.add(centre);
+            const tWheel = new THREE.Mesh(new THREE.CylinderGeometry(34, 34, 15, 24),
+                new THREE.MeshStandardMaterial({ color: 0x2a2e34, roughness: 0.5, metalness: 0.3,
+                                                 bumpMap: knurlTexture(), bumpScale: 1.0 }));
+            tWheel.rotation.z = Math.PI / 2;
+            tWheel.position.set(88, AXIS_Y, 0);
+            tWheel.castShadow = true; tailGrp.add(tWheel);
+            const tLock = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 74, 12), MAT.dark);
+            tLock.rotation.set(0, 0, 0.55);
+            tLock.position.set(20, AXIS_Y + 62, 34); tailGrp.add(tLock);
+            scene.add(tailGrp);
+
+            // --- leadscrew and feed shaft along the front ----------------
+            const lead = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, bedL - 20, 16),
+                new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.9, roughness: 0.3,
+                                                 bumpMap: knurlTexture(), bumpScale: 1.6 }));
+            lead.rotation.z = Math.PI / 2;
+            lead.position.set((BED_X0 + BED_X1) / 2, BED_TOP - 34, 96);
+            lead.castShadow = true; scene.add(lead);
+            const feedShaft = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, bedL - 20, 14), MAT.way);
+            feedShaft.rotation.z = Math.PI / 2;
+            feedShaft.position.set((BED_X0 + BED_X1) / 2, BED_TOP - 58, 90);
+            feedShaft.castShadow = true; scene.add(feedShaft);
+
+            // --- the saddle, and everything that rides on it -------------
+            saddleGrp = new THREE.Group();
+            const saddle = new THREE.Mesh(roundedBox(130, 30, 210, 6), MAT.cast);
+            saddle.position.set(0, BED_TOP + 15, 0);
+            saddle.castShadow = true; saddleGrp.add(saddle);
+            // the apron hanging down the front, with the traverse handwheel
+            const apron = new THREE.Mesh(roundedBox(120, 84, 26, 6), MAT.cast);
+            apron.position.set(0, BED_TOP - 14, 103);
+            apron.castShadow = true; saddleGrp.add(apron);
+            const hWheel = new THREE.Mesh(new THREE.CylinderGeometry(40, 40, 14, 26),
+                new THREE.MeshStandardMaterial({ color: 0x2a2e34, roughness: 0.5, metalness: 0.3,
+                                                 bumpMap: knurlTexture(), bumpScale: 1.0 }));
+            hWheel.position.set(0, BED_TOP - 22, 126);
+            hWheel.castShadow = true; saddleGrp.add(hWheel);
+            const hHandle = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 26, 10), MAT.dark);
+            hHandle.position.set(0, BED_TOP + 8, 138); saddleGrp.add(hHandle);
+
+            // The cross-slide sets the depth of cut. Its top has to stay under
+            // the biggest bar the chuck will hold, because it travels right in
+            // past the centre line — that is how facing reaches the axis.
+            crossGrp = new THREE.Group();
+            const cross = new THREE.Mesh(roundedBox(112, 22, 190, 5), MAT.cast2);
+            cross.position.set(0, CROSS_TOP - 11, 34);
+            cross.castShadow = true; crossGrp.add(cross);
+            const cWheel = new THREE.Mesh(new THREE.CylinderGeometry(28, 28, 13, 22),
+                new THREE.MeshStandardMaterial({ color: 0x2a2e34, roughness: 0.5, metalness: 0.3,
+                                                 bumpMap: knurlTexture(), bumpScale: 1.0 }));
+            cWheel.rotation.x = Math.PI / 2;
+            cWheel.position.set(0, CROSS_TOP - 11, 136);
+            cWheel.castShadow = true; crossGrp.add(cWheel);
+            const dial = new THREE.Mesh(new THREE.CylinderGeometry(20, 20, 12, 22), MAT.mach);
+            dial.rotation.x = Math.PI / 2;
+            dial.position.set(0, CROSS_TOP - 11, 124); crossGrp.add(dial);
+
+            // Everything from here up is TALL, so it all has to sit forward of
+            // the work: the compound, the toolpost, and only then the tool
+            // reaching back to the cutting edge.
+            const compound = new THREE.Mesh(roundedBox(96, 18, 96, 5), MAT.cast);
+            compound.position.set(0, COMP_TOP - 9, COMP_Z0 + 48);
+            compound.castShadow = true; crossGrp.add(compound);
+
+            toolGrp = new THREE.Group();
+            const post = new THREE.Mesh(roundedBox(64, 48, 64, 4), MAT.mach);
+            post.position.set(0, COMP_TOP + 24, POST_Z0 + 32);
+            post.castShadow = true; toolGrp.add(post);
+            const postNut = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 18, 6), MAT.dark);
+            postNut.position.set(0, COMP_TOP + 57, POST_Z0 + 32); toolGrp.add(postNut);
+            for (let k = 0; k < 2; k++) {
+                const clampBolt = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 20, 10), MAT.dark);
+                clampBolt.position.set(-15 + k * 30, COMP_TOP + 50, POST_Z0 + 10);
+                toolGrp.add(clampBolt);
+            }
+            // The tool bit reaches back from the post to centre height. Its
+            // cutting edge is at local z = 0, so the slide's position IS the
+            // radius being cut — which keeps the geometry honest.
+            const shank = new THREE.Mesh(roundedBox(20, 20, SHANK_Z - TIP_Z, 2), MAT.tool);
+            shank.position.set(0, AXIS_Y, (TIP_Z + SHANK_Z) / 2);
+            shank.castShadow = true; toolGrp.add(shank);
+            toolTip = new THREE.Mesh(roundedBox(14, 12, TIP_Z, 1.5), MAT.carbide);
+            toolTip.position.set(0, AXIS_Y, TIP_Z / 2);
+            toolTip.castShadow = true; toolGrp.add(toolTip);
+            crossGrp.add(toolGrp);
+            saddleGrp.add(crossGrp);
+            scene.add(saddleGrp);
+
+            chipGrp = new THREE.Group(); scene.add(chipGrp);
+        }
+
+        // ---- the bar itself, rebuilt from the radius profile -------------
+        // A lathe geometry swept from the row of radii. Every operation just
+        // pushes those radii down, so turning, facing and parting all fall out
+        // of the same array.
+        let barDirty = true;
+        function barEndIndex() {
+            for (let i = NSEG; i >= 0; i--) if (rad[i] > 0.06) return i;
+            return 0;
+        }
+        function buildBar() {
+            if (!workGrp) { workGrp = new THREE.Group(); spindleGrp.add(workGrp); }
+            if (workMesh) { workGrp.remove(workMesh); workMesh.geometry.dispose(); }
+            const end = barEndIndex();
+            const pts = [new THREE.Vector2(0, 0)];
+            for (let i = 0; i <= end; i++) pts.push(new THREE.Vector2(Math.max(0.05, rad[i]), xAt(i)));
+            pts.push(new THREE.Vector2(0.05, xAt(end)));
+            const g = new THREE.LatheGeometry(pts, 52).rotateZ(-Math.PI / 2);
+            const m = workMesh ? workMesh.material : new THREE.MeshStandardMaterial({
+                color: 0xffffff, map: barTexture(state.mat),
+                roughness: M().rough, metalness: M().metal });
+            workMesh = new THREE.Mesh(g, m);
+            workMesh.castShadow = workMesh.receiveShadow = true;
+            workGrp.add(workMesh);
+            barDirty = false;
+            applyMesh();
+        }
+        function newStock() {
+            freshBar();
+            if (workMesh) { workMesh.material.map = barTexture(state.mat);
+                            workMesh.material.roughness = M().rough;
+                            workMesh.material.metalness = M().metal;
+                            workMesh.material.needsUpdate = true; }
+            buildBar();
+        }
+
+        // ---- swarf -------------------------------------------------------
+        const CHIP_MAX = 110;
+        function spawnChip() {
+            if (!state.chips || chips.length >= CHIP_MAX) return;
+            const c = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.0, 7.5),
+                new THREE.MeshStandardMaterial({ color: M().chip, roughness: 0.45, metalness: 0.5 }));
+            c.position.set(state.toolX, AXIS_Y + 4, state.toolR + 6);
+            c.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+            chipGrp.add(c);
+            // thrown off the way the work is turning: up and toward the front
+            chips.push({ m: c,
+                vx: (Math.random() - 0.5) * 70,
+                vy: 60 + Math.random() * 130,
+                vz: 60 + Math.random() * 140,
+                spin: (Math.random() - 0.5) * 16 });
+        }
+        function stepChips(dt) {
+            for (let i = chips.length - 1; i >= 0; i--) {
+                const c = chips[i];
+                c.vy -= 900 * dt;
+                c.m.position.x += c.vx * dt;
+                c.m.position.y += c.vy * dt;
+                c.m.position.z += c.vz * dt;
+                c.m.rotation.x += c.spin * dt;
+                if (c.m.position.y <= 152) {          // lands in the chip tray
+                    c.m.position.y = 152; c.vy = 0;
+                    c.vx *= 0.6; c.vz *= 0.6; c.spin *= 0.6;
+                }
+                const gone = c.m.position.z > 210 || Math.abs(c.m.position.x) > 620;
+                if (gone) {
+                    chipGrp.remove(c.m); c.m.geometry.dispose(); c.m.material.dispose();
+                    chips.splice(i, 1);
+                }
+            }
+        }
+        function clearChips() {
+            chips.forEach(c => { chipGrp.remove(c.m); c.m.geometry.dispose(); c.m.material.dispose(); });
+            chips = [];
+        }
+
+        // =============================================================
+        //  Cutting
+        // =============================================================
+        const PART_X = 74;                    // where a parting cut is taken
+        const PART_W = 3.2;                   // width of the parting blade
+        const RAPID = 900;                    // mm/min for the free approach
+
+        function startPass() {
+            const end = barEndIndex();
+            if (state.op === 'turn') {
+                state.toolX = CUT_X1;
+                state.toolR = Math.max(0, radiusAt(CUT_X1) - P.depth);
+            } else if (state.op === 'face') {
+                state.toolX = Math.max(CUT_X0, xAt(end) - P.depth);
+                state.toolR = maxRadius() + 2;
+            } else {
+                state.toolX = PART_X;
+                state.toolR = maxRadius() + 2;
+            }
+            state.cut = 0;
+            state.elapsed = 0;
+        }
+
+        function step(dt) {
+            if (state.setupT < 1) {
+                if (setupCue === 0) { cue(aPlace); setupCue = 1; }
+                state.setupT = Math.min(1, state.setupT + dt / SETUP_T);
+                if (setupCue === 1 && state.setupT >= 0.46) { cue(aBolt); setupCue = 2; }
+                return;
+            }
+            // The spindle runs whenever there is power. A lathe is switched on
+            // and left running; what you do is wind the tool into it.
+            const stalled = state.running && state.cutting && overloaded();
+            state.stalled = stalled;
+            const wantRpm = (state.power && !stalled) ? rpm() : 0;
+            const k = stalled ? 26 : (wantRpm > state.spinRpm ? 2.4 : 1.1);
+            state.spinRpm += (wantRpm - state.spinRpm) * Math.min(1, k * dt);
+            if (Math.abs(wantRpm - state.spinRpm) < 8) state.spinRpm = wantRpm;
+            state.spin += 2 * Math.PI * state.spinRpm / 60 * dt;
+
+            if (!state.running) return;
+            if (stalled) return;                    // bogged down, going nowhere
+
+            const rate = feedRate() / 60 * dt;      // mm this tick
+            let cutting = false;
+
+            if (state.op === 'turn') {
+                // feeding from the tailstock end toward the chuck
+                state.toolX = Math.max(CUT_X0, state.toolX - rate);
+                cutting = removeAt(state.toolX, CUT_X1, state.toolR);
+                state.cut = CUT_X1 - state.toolX;
+                if (state.toolX <= CUT_X0 + 1e-6) finishPass();
+            } else {
+                // facing and parting both feed inwards, toward the axis
+                state.toolR = Math.max(0, state.toolR - rate);
+                if (state.op === 'face') {
+                    cutting = removeAt(state.toolX, BAR_L, state.toolR);
+                } else {
+                    cutting = removeAt(PART_X, PART_X + PART_W, state.toolR);
+                }
+                state.cut = maxRadius() - state.toolR;
+                if (state.toolR <= 1e-6) finishPass();
+            }
+            state.cutting = cutting;
+            if (cutting) {
+                state.elapsed += dt;
+                barDirty = true;
+                if (Math.random() < dt * 34) spawnChip();
+            }
+        }
+
+        function finishPass() {
+            state.running = false;
+            state.done = true;
+            state.passes++;
+            state.cutting = false;
+            state.power = false;                    // job done, switch off
+            if (state.op === 'part') dropOffcut();
+            barDirty = true;
+            paintRun();
+        }
+
+        // when a parting cut goes right through, the piece beyond it comes off
+        function dropOffcut() {
+            const i0 = clamp(Math.ceil(PART_X / dx()), 0, NSEG);
+            let any = false;
+            for (let i = i0; i <= NSEG; i++) if (rad[i] > 0.06) any = true;
+            if (!any || offcut) return;
+            const pts = [new THREE.Vector2(0, 0)];
+            let end = i0;
+            for (let i = NSEG; i >= i0; i--) if (rad[i] > 0.06) { end = i; break; }
+            for (let i = i0; i <= end; i++) pts.push(new THREE.Vector2(Math.max(0.05, rad[i]), xAt(i) - xAt(i0)));
+            pts.push(new THREE.Vector2(0.05, xAt(end) - xAt(i0)));
+            const g = new THREE.LatheGeometry(pts, 40).rotateZ(-Math.PI / 2);
+            offcut = new THREE.Mesh(g, workMesh.material.clone());
+            offcut.position.set(xAt(i0), AXIS_Y, 0);
+            offcut.castShadow = true;
+            scene.add(offcut);
+            offcutV = 0;
+            for (let i = i0; i <= NSEG; i++) rad[i] = 0;
+        }
+        function stepOffcut(dt) {
+            if (!offcut) return;
+            offcutV -= 1400 * dt;
+            offcut.position.y += offcutV * dt;
+            offcut.rotation.z += 1.6 * dt;
+            if (offcut.position.y < 168) {          // comes to rest in the tray
+                offcut.position.y = 168; offcutV = 0;
+            }
+        }
+        function clearOffcut() {
+            if (!offcut) return;
+            scene.remove(offcut);
+            offcut.geometry.dispose(); offcut.material.dispose();
+            offcut = null;
+        }
+
+        // =============================================================
+        //  Drawing one frame
+        // =============================================================
+        function update3D() {
+            if (!gl) return;
+            spindleGrp.rotation.x = state.spin;
+            // the jaws close on whatever bar is in the chuck
+            const jr = P.dia / 2 + 15;
+            chuckJaws.forEach(j => {
+                j.position.set(0, Math.cos(j.userData.a) * jr, Math.sin(j.userData.a) * jr);
+                j.rotation.x = j.userData.a;
+            });
+            // the saddle carries the tool along the bed; the cross-slide sets
+            // how deep it is in. Those are the two handles on a real lathe.
+            saddleGrp.position.x = state.toolX;
+            crossGrp.position.z = state.toolR;   // the edge sits exactly on the cut radius
+
+            if (barDirty) buildBar();
+
+            if (lampMesh) {
+                const bad = state.stalled;
+                if (!state.power || state.setupT < 1) {
+                    MAT.lamp.color.setHex(0x2c3138);
+                    MAT.lamp.emissive.setHex(0x161a1f);
+                    MAT.lamp.emissiveIntensity = 0.25;
+                } else {
+                    MAT.lamp.color.setHex(bad ? 0x8f1c1c : 0x1c8f4a);
+                    MAT.lamp.emissive.setHex(bad ? 0xef4444 : 0x22c55e);
+                    MAT.lamp.emissiveIntensity = bad ? 1.4 : 1.1;
+                }
+            }
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        const VIEWS = {
+            bench: { pos: [780, 760, 980],  tgt: [60, 250, 0] },
+            all:   { pos: [330, 470, 470],  tgt: [55, 296, 0] },
+            tool:  { pos: [150, 372, 230],  tgt: [62, 300, 18] },
+            front: { pos: [60, 330, 900],   tgt: [60, 285, 0] },
+            end:   { pos: [560, 380, 60],   tgt: [-20, 300, 0] }
+        };
+        let camFrom = null, camTo = null, camT = 1;
+        function setView(name) {
+            const v = VIEWS[name];
+            if (!v || !gl) return;
+            camFrom = { pos: camera.position.clone(), tgt: controls.target.clone() };
+            camTo = { pos: new THREE.Vector3().fromArray(v.pos), tgt: new THREE.Vector3().fromArray(v.tgt) };
+            camT = 0;
+        }
+        function advanceCamera(real) {
+            if (!gl) return;
+            if (camT < 1) {
+                camT = Math.min(1, camT + real / 0.8);
+                const e = ease(camT);
+                camera.position.lerpVectors(camFrom.pos, camTo.pos, e);
+                controls.target.lerpVectors(camFrom.tgt, camTo.tgt, e);
+            }
+            controls.autoRotate = state.turntable && camT >= 1;
+        }
+        const ease = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+
+        function applyMesh() {
+            if (!gl) return;
+            const on = state.mesh;
+            scene.traverse(o => {
+                if (!o.isMesh || !o.material) return;
+                const ms = Array.isArray(o.material) ? o.material : [o.material];
+                ms.forEach(m => { if ('wireframe' in m) m.wireframe = on; });
+            });
+        }
+        function applyTheme() {
+            if (!gl) return;
+            const dark = state.viewMode === 'blueprint';
+            scene.background.setHex(dark ? 0x0f172a : 0xf1f5f9);
+            floor3.material.color.setHex(dark ? 0x131c2e : 0xdbe1ea);
+            grid3.material.color.setHex(dark ? 0x1e293b : 0xcbd5e1);
+        }
+        function resizeView() {
+            const r = $('view3d').getBoundingClientRect();
+            const w = Math.max(1, r.width), h = Math.max(1, r.height);
+            if (gl) { camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); }
+            const gc = $('graph');
+            if (gc) { gc.width = 300; gc.height = 150; drawGraph(); }
+        }
+        window.addEventListener('resize', resizeView);
+
+        // =============================================================
+        //  Readings
+        // =============================================================
+        function updateStats() {
+            $('stat-rpm').textContent = rpm().toFixed(0);
+            $('stat-vc').textContent = cutSpeed().toFixed(1);
+            $('stat-force').textContent = cutForce().toFixed(0);
+            $('stat-power').textContent = cutPower().toFixed(0);
+            $('stat-dia').textContent = liveDia().toFixed(1);
+            const fast = speedRatio() > 1.35, slowc = speedRatio() < 0.45;
+            $('stat-vc').className = (fast || slowc)
+                ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold';
+            $('stat-power').className = overloaded()
+                ? 'text-rose-600 font-bold' : 'text-amber-600 font-bold';
+            paintAlarm();
+            if (state.trace) drawGraph();
+        }
+
+        // Three things go wrong on a lathe, each for its own reason.
+        function paintAlarm() {
+            const box = $('alarm');
+            let title = '', body = '', tone = '';
+            const ratio = speedRatio();
+            if (state.running && state.cutting && overloaded()) {
+                title = 'Stalled.';
+                body = 'This cut wants ' + cutPower().toFixed(0) + ' W and the motor has '
+                     + availPower().toFixed(0) + '. The chip is ' + P.feed.toFixed(2) + ' by '
+                     + P.depth.toFixed(2) + ' mm — take less depth or a finer feed.';
+                tone = 'bg-amber-50 border-amber-300 text-amber-800';
+            } else if (ratio > 1.35) {
+                title = 'Too fast for ' + M().name + '.';
+                body = 'The edge is doing ' + cutSpeed().toFixed(0) + ' m/min where ' + M().vc
+                     + ' is wanted. At ⌀' + liveDia().toFixed(0) + ' mm the right speed is about '
+                     + idealRpm().toFixed(0) + ' rpm — change down.';
+                tone = 'bg-orange-50 border-orange-300 text-orange-800';
+            } else if (ratio < 0.45 && liveDia() > 3) {
+                title = 'Too slow now.';
+                body = 'The bar is down to ⌀' + liveDia().toFixed(0) + ' mm, so the edge has dropped to '
+                     + cutSpeed().toFixed(0) + ' m/min. This is the lathe problem: the diameter fell and took '
+                     + 'the cutting speed with it. About ' + idealRpm().toFixed(0) + ' rpm would put it right.';
+                tone = 'bg-sky-50 border-sky-300 text-sky-800';
+            }
+            box.classList.toggle('hidden', !title);
+            if (!title) return;
+            box.className = 'absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl '
+                          + 'border shadow-md text-[calc(13px*var(--fs))] text-center max-w-lg ' + tone;
+            $('alarm-title').textContent = title;
+            $('alarm-body').textContent = body;
+        }
+
+        // The graph is the point of the whole simulation in one picture:
+        // cutting speed against diameter is a straight line through the origin,
+        // and every pass walks you down it toward zero.
+        function drawGraph() {
+            const cv = $('graph');
+            if (!cv) return;
+            const g = cv.getContext('2d');
+            const W = cv.width, H = cv.height, dark = state.viewMode === 'blueprint';
+            g.clearRect(0, 0, W, H);
+            g.fillStyle = dark ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.88)';
+            g.fillRect(0, 0, W, H);
+            g.strokeStyle = dark ? '#334155' : '#cbd5e1'; g.lineWidth = 1;
+            g.strokeRect(0.5, 0.5, W - 1, H - 1);
+            const L = 34, B = H - 22, R = W - 8, T = 16;
+            const maxD = 75, maxV = Math.max(M().vc * 1.8, Math.PI * maxD * rpm() / 1000);
+            const px = d => L + (d / maxD) * (R - L);
+            const py = v => B - (v / maxV) * (B - T);
+            // the speed this material wants
+            g.strokeStyle = '#10b981'; g.setLineDash([4, 3]); g.lineWidth = 1.5;
+            g.beginPath(); g.moveTo(L, py(M().vc)); g.lineTo(R, py(M().vc)); g.stroke();
+            g.setLineDash([]);
+            // Vc = pi D n : a straight line from the origin, one per gear
+            SPEEDS.forEach((n, i) => {
+                const on = i === state.speed;
+                g.strokeStyle = on ? '#0ea5e9' : (dark ? '#334155' : '#e2e8f0');
+                g.lineWidth = on ? 2.2 : 1;
+                g.beginPath(); g.moveTo(px(0), py(0));
+                g.lineTo(px(maxD), py(Math.PI * maxD * n / 1000)); g.stroke();
+            });
+            // where the cut is right now
+            const d = liveDia(), v = cutSpeed();
+            if (d <= maxD && v <= maxV) {
+                g.fillStyle = '#ef4444';
+                g.beginPath(); g.arc(px(d), py(v), 4.5, 0, 7); g.fill();
+            }
+            g.fillStyle = dark ? '#94a3b8' : '#64748b';
+            g.font = '10px Inter, sans-serif';
+            g.fillText('Vᴄ m/min', 4, 11);
+            g.fillText('⌀ mm', R - 34, H - 7);
+            g.fillText(M().vc + ' wanted', L + 4, py(M().vc) - 3);
+            g.fillText('0', L - 8, B + 4);
+            g.fillText(String(maxD), R - 12, B + 12);
+        }
+
+        // =============================================================
+        //  Sound
+        // =============================================================
+        const aMotor = $('a-motor'), aCut = $('a-cut'), aPlace = $('a-place'), aBolt = $('a-bolt');
+        const PITCH_REF = 700;                  // the rpm the clips sit at
+        let motorOn = false, motorVol = 0, cutOn = false, cutVol = 0;
+        let setupCue = 2;
+        [aMotor, aCut].forEach(a => {
+            if (a) a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = false;
+        });
+        function cue(el) {
+            if (!el || !state.sound) return;
+            try { el.currentTime = 0; el.volume = 0.85; el.play().catch(() => {}); } catch (e) {}
+        }
+        function soundUpdate(real) {
+            const byT = state.fast ? 1.5 : state.slow ? 0.7 : 1;
+            if (aMotor) {
+                const wantM = state.sound && state.setupT >= 1 && (state.power || state.spinRpm > 25);
+                const spun = clamp(state.spinRpm / Math.max(1, rpm()), 0, 1);
+                const mT = !wantM ? 0 : state.stalled ? 0.30 : 0.07 + 0.17 * spun;
+                const mR = state.stalled ? clamp(0.45 * byT, 0.34, 2.5)
+                                         : clamp(state.spinRpm / PITCH_REF * byT, 0.34, 2.5);
+                if (wantM && !motorOn) {
+                    motorOn = true; motorVol = 0;
+                    try { aMotor.volume = 0; aMotor.play().catch(() => {}); } catch (e) {}
+                }
+                if (motorOn) {
+                    motorVol += (mT - motorVol) * Math.min(1, real * 14);
+                    try { aMotor.volume = clamp(motorVol, 0, 1); aMotor.playbackRate = mR; } catch (e) {}
+                    if (!wantM && motorVol < 0.02) { motorOn = false; try { aMotor.pause(); } catch (e) {} }
+                }
+            }
+            if (!aCut) return;
+            const want = state.sound && state.running && state.cutting && state.setupT >= 1;
+            let cT = 0, cR = 1;
+            if (want) {
+                if (state.stalled) { cT = 0.32; cR = clamp(0.45 * byT, 0.34, 2.5); }
+                else {
+                    const load = clamp(cutPower() / availPower(), 0, 1);
+                    cT = 0.38 + 0.42 * load;
+                    cR = clamp(cutSpeed() / 45 * byT, 0.34, 2.5);
+                }
+            }
+            if (want && !cutOn) {
+                cutOn = true; cutVol = 0;
+                try { aCut.volume = 0; aCut.play().catch(() => {}); } catch (e) {}
+            }
+            if (!cutOn) return;
+            cutVol += (cT - cutVol) * Math.min(1, real * 26);
+            try { aCut.volume = clamp(cutVol, 0, 1); aCut.playbackRate = cR; } catch (e) {}
+            if (!want && cutVol < 0.02) { cutOn = false; try { aCut.pause(); } catch (e) {} }
+        }
+        function soundStop() {
+            cutOn = false; cutVol = 0;
+            if (aCut) { try { aCut.pause(); aCut.currentTime = 0; aCut.volume = 0; } catch (e) {} }
+        }
+        function soundAllStop() {
+            soundStop(); motorOn = false; motorVol = 0;
+            [aMotor, aPlace, aBolt].forEach(a => {
+                if (a) { try { a.pause(); a.volume = 0; } catch (e) {} }
+            });
+        }
+
+        // =============================================================
+        //  Loop
+        // =============================================================
+        const SETUP_T = 1.6;
+        const DT = 1 / 240;
+        let acc = 0, last = performance.now();
+        function frame(now) {
+            const real = Math.min((now - last) / 1000, 0.05); last = now;
+            const scale = state.fast ? 4 : state.slow ? 0.25 : 1;
+            acc += real * scale;
+            advanceCamera(real);
+            let guard = 0;
+            while (acc >= DT && guard++ < 3000) {
+                step(DT); stepChips(DT); stepOffcut(DT); acc -= DT;
+            }
+            soundUpdate(real);
+            updateStats();
+            update3D();
+            requestAnimationFrame(frame);
+        }
+
+        // =============================================================
+        //  Controls
+        // =============================================================
+        function reset(showSetup) {
+            state.running = false; state.done = false; state.cutting = false;
+            state.stalled = false; state.power = false;
+            state.passes = 0; state.cut = 0; state.elapsed = 0;
+            state.setupT = showSetup ? 0 : 1;
+            setupCue = showSetup ? 0 : 2;
+            soundStop();
+            if (gl) { clearChips(); clearOffcut(); newStock(); }
+            state.toolX = CUT_X1; state.toolR = P.dia / 2 + 12;
+            paintRun();
+        }
+        function bindSlider(id, key, fmt, after) {
+            const el = $(id);
+            el.addEventListener('input', () => {
+                P[key] = parseFloat(el.value);
+                $(id.replace('s-', 'v-')).textContent = fmt(P[key]);
+                if (after) after();
+            });
+        }
+        bindSlider('s-feed', 'feed', v => v.toFixed(2));
+        bindSlider('s-depth', 'depth', v => v.toFixed(2));
+        bindSlider('s-dia', 'dia', v => v.toFixed(0), () => reset());
+
+        function paintOps() {
+            document.querySelectorAll('.oseg').forEach(b =>
+                b.classList.toggle('on', b.dataset.op === state.op));
+        }
+        document.querySelectorAll('.oseg').forEach(b => b.addEventListener('click', () => {
+            if (b.dataset.op === state.op) return;
+            state.op = b.dataset.op;
+            paintOps();
+            state.running = false; state.done = false; state.power = false;
+            soundStop();
+            startPass(); paintRun();
+        }));
+
+        function paintMats() {
+            document.querySelectorAll('.mseg').forEach(b =>
+                b.classList.toggle('on', b.dataset.mat === state.mat));
+        }
+        document.querySelectorAll('.mseg').forEach(b => b.addEventListener('click', () => {
+            if (b.dataset.mat === state.mat) return;
+            state.mat = b.dataset.mat;
+            paintMats(); reset(true);
+        }));
+
+        // the gearbox positions, built from the speed table so the two cannot
+        // fall out of step
+        SPEEDS.forEach((n, i) => {
+            const b = document.createElement('button');
+            b.className = 'sseg px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 '
+                        + 'text-[calc(11px*var(--fs))] font-bold transition';
+            b.dataset.speed = i;
+            b.textContent = String.fromCharCode(65 + i);
+            $('speed-row').appendChild(b);
+        });
+        function paintSpeeds() {
+            document.querySelectorAll('.sseg').forEach(b => {
+                const i = +b.dataset.speed;
+                b.classList.toggle('on', i === state.speed);
+                b.title = 'Position ' + String.fromCharCode(65 + i) + ': ' + SPEEDS[i]
+                        + ' rpm — at ⌀' + liveDia().toFixed(0) + ' mm that is '
+                        + (Math.PI * liveDia() * SPEEDS[i] / 1000).toFixed(0) + ' m/min';
+            });
+        }
+        document.querySelectorAll('.sseg').forEach(b => b.addEventListener('click', () => {
+            state.speed = +b.dataset.speed;
+            paintSpeeds();
+            if (gl) drawSpeeds();
+        }));
+
+        function paintRun() {
+            const b = $('btn-run');
+            const on = ['bg-slate-900', 'text-white', 'border-slate-900'];
+            const off = ['bg-white', 'text-slate-900', 'border-slate-200', 'hover:bg-slate-50'];
+            on.forEach(c => b.classList.toggle(c, !state.running));
+            off.forEach(c => b.classList.toggle(c, state.running));
+            const label = state.running ? 'Stop'
+                : state.op === 'turn' ? (state.passes ? 'Another Pass' : 'Cut')
+                : state.op === 'face' ? (state.passes ? 'Face Again' : 'Face')
+                : (state.passes ? 'Part Again' : 'Part Off');
+            $('run-label').textContent = label;
+            $('btn-run').disabled = state.op === 'part' && !!offcut;
+        }
+        $('btn-run').addEventListener('click', () => {
+            if (state.running) {
+                state.running = false; state.power = false;
+                state.cutting = false; state.stalled = false;
+            }
+            else {
+                if (state.setupT < 1) { state.setupT = 1; setupCue = 2; }
+                if (state.op === 'part' && offcut) return;
+                startPass();
+                state.power = true;               // this click is what starts it
+                state.running = true; state.done = false;
+            }
+            paintRun();
+        });
+        $('btn-reset').addEventListener('click', () => {
+            Object.assign(P, DEFAULTS);
+            ['feed', 'depth', 'dia'].forEach(k => {
+                $('s-' + k).value = DEFAULTS[k];
+                $('v-' + k).textContent = k === 'dia' ? DEFAULTS[k] : DEFAULTS[k].toFixed(2);
+            });
+            reset(true);
+        });
+
+        function paintChip(chip, on) {
+            ['bg-white', 'hover:bg-slate-50', 'text-slate-900', 'border-slate-200']
+                .forEach(c => chip.classList.toggle(c, on));
+            ['bg-slate-100', 'hover:bg-slate-200', 'text-slate-400', 'border-slate-200']
+                .forEach(c => chip.classList.toggle(c, !on));
+        }
+        function bindChip(chk, chip, key, after) {
+            $(chk).addEventListener('change', e => {
+                state[key] = e.target.checked;
+                paintChip($(chip), e.target.checked);
+                if (after) after(e.target.checked);
+            });
+        }
+        function setChip(key, on) {
+            const el = $('chk-' + key);
+            if (el.checked === on) return;
+            el.checked = on;
+            el.dispatchEvent(new Event('change'));
+        }
+        bindChip('chk-fast', 'chip-fast', 'fast', on => { if (on) setChip('slow', false); });
+        bindChip('chk-slow', 'chip-slow', 'slow', on => { if (on) setChip('fast', false); });
+        bindChip('chk-chips', 'chip-chips', 'chips', on => { if (!on) clearChips(); });
+        bindChip('chk-sound', 'chip-sound', 'sound', on => { if (!on) soundAllStop(); });
+        bindChip('chk-trace', 'chip-trace', 'trace', on => {
+            $('graph').classList.toggle('hidden', !on);
+            if (on) drawGraph();
+        });
+        bindChip('chk-mesh', 'chip-mesh', 'mesh', () => applyMesh());
+        bindChip('chk-spin', 'chip-spin', 'turntable');
+
+        function paintViews(name) {
+            document.querySelectorAll('.vseg').forEach(b =>
+                b.classList.toggle('on', b.dataset.view === name));
+        }
+        document.querySelectorAll('.vseg').forEach(b => b.addEventListener('click', () => {
+            setView(b.dataset.view); paintViews(b.dataset.view);
+        }));
+
+        function paintViewMode() {
+            const dark = state.viewMode === 'blueprint';
+            $('chk-view-mode').checked = dark;
+            $('txt-view-mode').textContent = dark ? 'Light' : 'Dark';
+            paintChip($('chip-view-mode'), dark);
+            applyTheme();
+            if (state.trace) drawGraph();
+        }
+        $('chk-view-mode').addEventListener('change', e => {
+            state.viewMode = e.target.checked ? 'blueprint' : 'light';
+            paintViewMode();
+        });
+
+        $('btn-info').addEventListener('click', () => $('info-modal').classList.remove('hidden'));
+        $('btn-info-close').addEventListener('click', () => $('info-modal').classList.add('hidden'));
+        $('info-modal').addEventListener('click', e => {
+            if (e.target === $('info-modal')) $('info-modal').classList.add('hidden');
+        });
+        window.addEventListener('keydown', e => {
+            if (e.key === 'Escape') $('info-modal').classList.add('hidden');
+        });
+
+        function hideLoader() {
+            const el = document.getElementById('loader');
+            if (el) el.classList.add('gone');
+        }
+
+        window.onload = function () {
+            try {
+                init3D();
+                gl = true;
+                controls.addEventListener('start', () => paintViews(null));
+            } catch (e) {
+                console.warn('3D unavailable:', e);
+                const n = $('nogl');
+                n.classList.remove('hidden'); n.classList.add('flex');
+            }
+            reset();
+            paintOps(); paintMats(); paintSpeeds(); paintRun(); paintViewMode();
+            applyMesh();
+            resizeView();
+            requestAnimationFrame(hideLoader);
+            setTimeout(hideLoader, 400);
+            requestAnimationFrame(frame);
+        };
+    </script>
+</body>
+</html>
