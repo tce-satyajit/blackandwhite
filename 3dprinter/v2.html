@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bambu Lab A1 Mini 3D Printer Simulation - Three.js</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f1015;
+            color: #f0f0f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            height: 100vh;
+        }
+
+        #canvas-container {
+            flex: 1;
+            height: 100%;
+            position: relative;
+        }
+
+        /* Modern HUD Control Panel */
+        .sidebar {
+            width: 320px;
+            background: #181a20;
+            border-left: 1px solid #2a2e39;
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            box-sizing: border-box;
+            z-index: 10;
+            box-shadow: -5px 0 20px rgba(0,0,0,0.5);
+        }
+
+        h1 {
+            font-size: 1.25rem;
+            margin-top: 0;
+            color: #00d2ff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h1 span {
+            font-size: 0.75rem;
+            background: #00d2ff22;
+            color: #00d2ff;
+            padding: 2px 8px;
+            border-radius: 4px;
+            border: 1px solid #00d2ff55;
+        }
+
+        .card {
+            background: #21242d;
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 15px;
+            border: 1px solid #2e3342;
+        }
+
+        .card-title {
+            font-size: 0.8rem;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        .card-value {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .progress-track {
+            width: 100%;
+            background: #121318;
+            border-radius: 4px;
+            height: 8px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #00d2ff, #0072ff);
+            transition: width 0.1s linear;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: auto;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+
+        #btn-toggle {
+            background: #00d2ff;
+            color: #0f1015;
+        }
+
+        #btn-toggle:hover {
+            background: #00a8cc;
+        }
+
+        #btn-reset {
+            background: #2e3342;
+            color: #f0f0f0;
+        }
+
+        #btn-reset:hover {
+            background: #3a4154;
+        }
+
+        .instructions {
+            font-size: 0.75rem;
+            color: #8b949e;
+            margin-top: 12px;
+            text-align: center;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div class="sidebar">
+        <h1>A1 Mini <span>Sim</span></h1>
+        
+        <div class="card">
+            <div class="card-title">Printer Status</div>
+            <div id="lbl-status" class="card-value" style="color: #00d2ff;">Standby</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Nozzle Temp</div>
+            <div id="lbl-temp" class="card-value">24°C <span style="font-size:0.8rem; color:#8b949e;">/ 210°C</span></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Build Layer</div>
+            <div id="lbl-layer" class="card-value">0 / 40</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Print Progress</div>
+            <div id="lbl-progress-text" style="font-size: 0.9rem; margin-top: 4px;">0%</div>
+            <div class="progress-track">
+                <div id="progress-fill" class="progress-fill"></div>
+            </div>
+        </div>
+
+        <div class="btn-group">
+            <button id="btn-toggle">Start Print</button>
+            <button id="btn-reset">Reset</button>
+        </div>
+
+        <div class="instructions">
+            💡 <strong>Orbit:</strong> Left Click + Drag<br>
+            🔍 <strong>Zoom:</strong> Scroll Wheel
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // --- Setup Scene, Camera, Renderer ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f1015);
+
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(180, 140, 180);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.target.set(0, 40, 0);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(100, 200, 100);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        const pointLight = new THREE.PointLight(0x00d2ff, 1, 100);
+        pointLight.position.set(0, 80, 0);
+        scene.add(pointLight);
+
+        // --- Build Bambu Lab A1 Mini Structural Components ---
+
+        // 1. Base frame & Bed Slinger Plate
+        const baseGeometry = new THREE.BoxGeometry(140, 10, 140);
+        const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1c23, roughness: 0.4 });
+        const basePlate = new THREE.Mesh(baseGeometry, baseMaterial);
+        basePlate.position.y = -5;
+        scene.add(basePlate);
+
+        // Magnetic PEI Textured Heatbed (Dark grey/green metallic plate)
+        const bedGeometry = new THREE.BoxGeometry(110, 2, 110);
+        const bedMaterial = new THREE.MeshStandardMaterial({ color: 0x1f242d, roughness: 0.6, metalness: 0.3 });
+        const heatedBed = new THREE.Mesh(bedGeometry, bedMaterial);
+        heatedBed.position.y = 1;
+        heatedBed.receiveShadow = true;
+        scene.add(heatedBed);
+
+        // 2. Vertical Gantry Tower (Characteristic cantilever backbone on the A1 series)
+        const towerGroup = new THREE.Group();
+        
+        // Right-side vertical beam structure
+        const verticalRailGeo = new THREE.BoxGeometry(16, 140, 16);
+        const metalMaterial = new THREE.MeshStandardMaterial({ color: 0x3d4452, metalness: 0.8, roughness: 0.2 });
+        const verticalRail = new THREE.Mesh(verticalRailGeo, metalMaterial);
+        verticalRail.position.set(65, 70, -65);
+        verticalRail.castShadow = true;
+        towerGroup.add(verticalRail);
+
+        // Top structural bridge/housing box
+        const topHousingGeo = new THREE.BoxGeometry(150, 25, 30);
+        const topHousingMat = new THREE.MeshStandardMaterial({ color: 0x111318 });
+        const topHousing = new THREE.Mesh(topHousingGeo, topHousingMat);
+        topHousing.position.set(0, 130, -65);
+        towerGroup.add(topHousing);
+        scene.add(towerGroup);
+
+        // 3. Toolhead Assembly (Extruder and Hotend)
+        const toolheadGroup = new THREE.Group();
+        
+        const housingGeo = new THREE.BoxGeometry(24, 30, 24);
+        const housingMat = new THREE.MeshStandardMaterial({ color: 0x00d2ff, roughness: 0.3 }); // Cyan accent branding
+        const extruderHousing = new THREE.Mesh(housingGeo, housingMat);
+        extruderHousing.castShadow = true;
+        toolheadGroup.add(extruderHousing);
+
+        // Nozzle tip
+        const nozzleGeo = new THREE.ConeGeometry(3, 8, 8);
+        const nozzleMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.9 });
+        const nozzle = new THREE.Mesh(nozzleGeo, nozzleMat);
+        nozzle.position.y = -18;
+        toolheadGroup.add(nozzle);
+
+        scene.add(toolheadGroup);
+
+        // --- Procedural 3D Print Model Generation ---
+        const totalLayers = 40;
+        const layerHeight = 1.5;
+        const modelGroup = new THREE.Group();
+        scene.add(modelGroup);
+
+        // Pre-create geometry slots for each layer ring of the model (a stylized futuristic vase / gear core)
+        const modelLayers = [];
+        const modelRadius = 30;
+
+        for (let l = 0; l < totalLayers; l++) {
+            const points = [];
+            let radiusVariation = modelRadius + Math.sin(l * 0.2) * 5; // Organic vase shape curve
+            
+            for (let a = 0; a <= Math.PI * 2; a += 0.2) {
+                // Square-rounded perimeter profile typical of modern printed parts
+                let x = Math.cos(a) * radiusVariation;
+                let z = Math.sin(a) * radiusVariation;
+                points.push(new THREE.Vector3(x, 0, z));
+            }
+            
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({ color: 0x00d2ff, linewidth: 2 });
+            const layerLine = new THREE.Line(geometry, material);
+            
+            layerLine.position.y = 2 + (l * layerHeight);
+            layerLine.visible = false; // Hidden initially
+            modelGroup.add(layerLine);
+            modelLayers.push(layerLine);
+        }
+
+        // --- Simulation State Variables ---
+        let isPrinting = false;
+        let currentLayer = 0;
+        let printAngle = 0;
+        let currentTemp = 24;
+        const targetTemp = 210;
+
+        // UI Element bindings
+        const btnToggle = document.getElementById('btn-toggle');
+        const btnReset = document.getElementById('btn-reset');
+        const lblStatus = document.getElementById('lbl-status');
+        const lblTemp = document.getElementById('lbl-temp');
+        const lblLayer = document.getElementById('lbl-layer');
+        const lblProgressText = document.getElementById('lbl-progress-text');
+        const progressFill = document.getElementById('progress-fill');
+
+        function resetSim() {
+            isPrinting = false;
+            currentLayer = 0;
+            printAngle = 0;
+            currentTemp = 24;
+            
+            modelLayers.forEach(layer => layer.visible = false);
+            
+            btnToggle.textContent = "Start Print";
+            lblStatus.textContent = "Standby";
+            lblStatus.style.color = "#00d2ff";
+            lblTemp.innerHTML = `${currentTemp}°C <span style="font-size:0.8rem; color:#8b949e;">/ 210°C</span>`;
+            lblLayer.textContent = `0 / ${totalLayers}`;
+            lblProgressText.textContent = `0%`;
+            progressFill.style.width = `0%`;
+            toolheadGroup.position.set(0, 20, 0);
+        }
+
+        btnToggle.addEventListener('click', () => {
+            if (currentLayer >= totalLayers) resetSim();
+            isPrinting = !isPrinting;
+            btnToggle.textContent = isPrinting ? "Pause Print" : "Resume Print";
+            lblStatus.textContent = isPrinting ? "Printing..." : "Paused";
+            lblStatus.style.color = isPrinting ? "#00ffcc" : "#ffaa00";
+        });
+
+        btnReset.addEventListener('click', resetSim);
+
+        // --- Animation & Simulation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (isPrinting) {
+                // Thermal warm-up phase simulation
+                if (currentTemp < targetTemp) {
+                    currentTemp = Math.min(targetTemp, currentTemp + 1.5);
+                    lblTemp.innerHTML = `${Math.floor(currentTemp)}°C <span style="font-size:0.8rem; color:#8b949e;">/ 210°C</span>`;
+                }
+
+                // Advance extruder along print head trajectory path
+                printAngle += 0.08;
+                let radiusVar = modelRadius + Math.sin(currentLayer * 0.2) * 5;
+                let hx = Math.cos(printAngle) * radiusVar;
+                let hz = Math.sin(printAngle) * radiusVar;
+                let hy = 2 + (currentLayer * layerHeight) + 15; // Toolhead offset above layer
+
+                // Update Toolhead Physical 3D Position
+                toolheadGroup.position.set(hx, hy, hz);
+                pointLight.position.set(hx, hy - 5, hz);
+
+                // Reveal model layer geometry progressively
+                if (currentLayer < totalLayers) {
+                    modelLayers[currentLayer].visible = true;
+                }
+
+                if (printAngle >= Math.PI * 2) {
+                    printAngle = 0;
+                    currentLayer++;
+
+                    if (currentLayer >= totalLayers) {
+                        isPrinting = false;
+                        lblStatus.textContent = "Print Complete!";
+                        lblStatus.style.color = "#00d2ff";
+                        btnToggle.textContent = "Restart Print";
+                        toolheadGroup.position.set(0, 100, 0); // Park head
+                    }
+                }
+
+                // Update HUD metrics
+                lblLayer.textContent = `${currentLayer} / ${totalLayers}`;
+                let progressPercent = Math.floor((currentLayer / totalLayers) * 100);
+                lblProgressText.textContent = `${progressPercent}%`;
+                progressFill.style.width = `${progressPercent}%`;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Window resize responsiveness handler
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        // Initialize animation loop
+        resetSim();
+        animate();
+    </script>
+</body>
+</html>

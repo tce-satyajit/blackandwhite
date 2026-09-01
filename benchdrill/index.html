@@ -1,0 +1,2070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bench Drill &mdash; Speed, Torque and the Belt That Sets Them</title>
+    <!-- Local vendored assets - runs fully offline, no CDN required -->
+    <script src="vendor/tailwind.js"></script>
+    <script src="vendor/three/three.min.js"></script>
+    <script src="vendor/three/OrbitControls.js"></script>
+    <link href="vendor/fontawesome.css" rel="stylesheet">
+    <link href="vendor/fonts.css" rel="stylesheet">
+    <style>
+        /* ---- Text size in the HTML chrome ------------------------- */
+        :root { --fs: 1.15; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+            color: #0f172a;
+            overflow-x: hidden;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        canvas { touch-action: none; }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #e2e8f0; }
+        ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            background: #e5e7eb;
+            height: 6px;
+            border-radius: 999px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px; width: 18px; border-radius: 50%;
+            background: #0f172a;
+            border: 2px solid #ffffff;
+            cursor: pointer;
+            box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(15, 23, 42, 0.25);
+            transition: transform 0.1s ease, background-color 0.2s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); background: #334155; }
+        input[type=range]:focus-visible::-webkit-slider-thumb {
+            box-shadow: 0 0 0 1px #e5e7eb, 0 0 0 4px rgba(15, 23, 42, 0.18);
+        }
+
+        /* ---- Loading veil ------------------------------------------- */
+        #loader {
+            position: fixed; inset: 0; z-index: 100;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 14px;
+            background: #f1f5f9;
+            transition: opacity .35s ease, visibility .35s ease;
+        }
+        #loader.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+        #loader .ring {
+            width: 38px; height: 38px; border-radius: 50%;
+            border: 3px solid #cbd5e1; border-top-color: #0f172a;
+            animation: loaderspin .8s linear infinite;
+        }
+        #loader .cap {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 13px; font-weight: 600; letter-spacing: .02em; color: #64748b;
+        }
+        @keyframes loaderspin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { #loader .ring { animation-duration: 2.4s; } }
+
+        .mseg.on, .sseg.on, .vseg.on, .bseg.on { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+        .sseg:disabled { cursor: default; }
+        .sseg.dim { opacity: .38; }
+
+        .glass-panel {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none bg-slate-100">
+
+    <div id="loader">
+        <div class="ring"></div>
+        <p class="cap">Loading Bench Drill&hellip;</p>
+    </div>
+
+    <!-- One loop per family of material. Wood tears, metal squeals. -->
+    <audio id="a-motor" src="vendor/audio/drill_motor.mp3" preload="auto" loop></audio>
+    <!-- one-shots for setting the work up: the stock going down, then the clamps -->
+    <audio id="a-place" src="vendor/audio/change_material.mp3" preload="auto"></audio>
+    <audio id="a-bolt" src="vendor/audio/bolt_sound.mp3" preload="auto"></audio>
+    <audio id="a-wood" src="vendor/audio/drill_wood.mp3" preload="auto" loop></audio>
+    <audio id="a-metal" src="vendor/audio/drill_metal.mp3" preload="auto" loop></audio>
+
+    <header class="glass-panel sticky top-0 z-30 px-4 border-b border-slate-200 shrink-0">
+        <div class="w-full flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div>
+                    <h1 class="font-bold text-[calc(16px*var(--fs))] text-slate-800 flex items-center gap-2 leading-tight">
+                        Bench Drill
+                    </h1>
+                    <p class="text-[calc(14px*var(--fs))] text-slate-500">Speed, Torque and the Belt That Sets Them</p>
+                </div>
+            </div>
+
+            <div class="hidden sm:flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 text-[calc(16px*var(--fs))] text-slate-600">
+                <div title="How fast the chuck turns, set by which step the belt is on.">Spindle: <span id="stat-rpm" class="text-sky-600 font-bold">0</span> rpm</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="How fast the cutting edge travels. This is what the bit actually feels, and it is what decides whether the edge survives.">Cutting: <span id="stat-vc" class="text-emerald-600 font-bold">0</span> m/min</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="Turning effort the spindle has to supply, and what the belt at this step can actually pass on.">Torque: <span id="stat-torque" class="text-violet-600 font-bold">0</span> N&middot;m</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="Power the cut is asking of the motor, against what the motor has.">Power: <span id="stat-power" class="text-amber-600 font-bold">0</span> W</div>
+            </div>
+        </div>
+    </header>
+
+    <main class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+
+        <div class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+
+            <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
+                <div id="view3d" class="absolute inset-0"></div>
+
+                <div id="nogl" class="hidden absolute inset-0 z-20 items-center justify-center p-8 text-center">
+                    <p class="text-[calc(14px*var(--fs))] text-slate-600 max-w-md">This browser could not start 3D graphics (WebGL), so the drill cannot be drawn. The readings and controls below still work.</p>
+                </div>
+
+                <!-- Said out loud when the machine gives up, so a stalled
+                     spindle does not just look like a frozen picture. -->
+                <div id="alarm" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md text-[calc(13px*var(--fs))] text-center max-w-md">
+                    <b id="alarm-title"></b> <span id="alarm-body" class="opacity-90"></span>
+                </div>
+            </div>
+
+            <!-- Sliders two by two on the left, everything else beside them. -->
+            <div class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col xl:flex-row gap-2">
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 xl:w-[430px] shrink-0">
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-feed" class="font-semibold text-slate-700" title="How fast the bit is pushed down into the work. Feed sets how thick a chip each edge takes, and so how hard the cut is.">Feed Rate</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-feed">60</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm/min</span></span>
+                        </div>
+                        <input id="s-feed" type="range" min="10" max="300" step="5" value="60" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>10 gentle</span><span>f</span><span>300 hard</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-thick" class="font-semibold text-slate-700" title="How deep the hole has to go. With the feed rate, this is the whole of how long the job takes.">Thickness</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-thick">20</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
+                        </div>
+                        <input id="s-thick" type="range" min="6" max="40" step="2" value="20" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>6</span><span>t</span><span>40</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-clamp" class="font-semibold text-slate-700" title="How hard the work is held down. The drill twists the workpiece as hard as it twists the bit, and only friction from the clamp stops it spinning.">Clamp Force</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-clamp">600</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">N</span></span>
+                        </div>
+                        <input id="s-clamp" type="range" min="0" max="1200" step="25" value="600" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0 loose</span><span>N</span><span>1200 tight</span></div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center justify-center xl:justify-start gap-2 flex-1 min-w-0">
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="How wide the drill is. A wider bit sweeps a longer path every turn, so at the same rpm its edge travels faster.">Bit&nbsp;&empty; <span class="mono font-bold text-slate-900"><span id="v-bit">8</span></span> mm</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="bseg px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-bit="4">4</button>
+                            <button class="bseg px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-bit="6">6</button>
+                            <button class="bseg on px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-bit="8">8</button>
+                            <button class="bseg px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-bit="12">12</button>
+                            <button class="bseg px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-bit="16">16</button>
+                            <button class="bseg px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-bit="20">20</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center">Material</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="mseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="wood">Wood</button>
+                            <button class="mseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="alu">Aluminium</button>
+                            <button class="mseg on px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="steel">Mild Steel</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Which pair of pulleys the belt sits on. Step 1 is the slowest and strongest, step 5 the fastest and weakest.">Belt Step</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="sseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-step="0">1</button>
+                            <button class="sseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-step="1">2</button>
+                            <button class="sseg on px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-step="2">3</button>
+                            <button class="sseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-step="3">4</button>
+                            <button class="sseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-step="4">5</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center">View</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="vseg on px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="bench">Bench</button>
+                            <button class="vseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="all" title="Belt, drill and work all in one frame — the whole chain from the motor to the hole.">All</button>
+                            <button class="vseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="front">Front</button>
+                            <button class="vseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="belt">Belt</button>
+                            <button class="vseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="bit">Bit</button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-center flex-wrap gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <button id="btn-run" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-700 text-white border-slate-900 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-play"></i><span id="run-label">Drill</span>
+                        </button>
+                        <button id="btn-reset" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-rotate-left"></i><span>Reset</span>
+                        </button>
+
+                        <span class="w-px h-5 bg-slate-200"></span>
+
+                        <label id="chip-fast" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Fast forward: run the job at four times speed.">
+                            <input id="chk-fast" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer"><span>Fast</span>
+                        </label>
+                        <label id="chip-slow" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Slow motion: a quarter speed, to watch the belt and the chips.">
+                            <input id="chk-slow" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer"><span>Slow</span>
+                        </label>
+                        <label id="chip-chips" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show the swarf the cut throws off.">
+                            <input id="chk-chips" type="checkbox" class="accent-slate-900" checked><span>Swarf</span>
+                        </label>
+                        <label id="chip-guard" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="The belt guard. Lift it to see the pulleys and the belt; a real machine will not start with it open.">
+                            <input id="chk-guard" type="checkbox" class="accent-slate-900" checked><span>Guard</span>
+                        </label>
+                        <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Sound: the note follows the spindle speed, so you can hear the belt step change.">
+                            <input id="chk-sound" type="checkbox" class="accent-slate-900" checked><span>Sound</span>
+                        </label>
+                        <label id="chip-mesh" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show mesh: draw every surface as the triangles it is really made of.">
+                            <input id="chk-mesh" type="checkbox" class="accent-slate-900"><span>Mesh</span>
+                        </label>
+                        <label id="chip-spin" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none">
+                            <input id="chk-spin" type="checkbox" class="accent-slate-900"><span>Spin</span>
+                        </label>
+                        <label id="chip-view-mode" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Dark: put the bench on a dark ground.">
+                            <input id="chk-view-mode" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer" checked><span><span id="txt-view-mode">Light</span></span>
+                        </label>
+                        <button id="btn-info" class="p-2 w-9 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition" title="Learning outcomes and the physics" aria-label="Learning outcomes">
+                            <i class="fa-solid fa-circle-info"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Explainer modal -->
+    <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div id="info-backdrop" class="absolute inset-0 bg-slate-900/50"></div>
+        <div class="relative w-full max-w-2xl max-h-[86vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div class="shrink-0 border-b border-slate-200 px-5 py-3 flex items-start justify-between gap-4">
+                <div>
+                    <h2 class="text-[18px] font-bold text-slate-800">Bench Drill &mdash; Speed, Torque and the Belt That Sets Them</h2>
+                    <p class="text-[14px] text-slate-500">One motor, one speed &mdash; and five different machines, depending on where the belt sits</p>
+                </div>
+                <button id="info-close" aria-label="Close"
+                        class="shrink-0 w-7 h-7 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition text-[24px] leading-none">&times;</button>
+            </div>
+
+            <div class="overflow-y-auto px-5 py-4 text-[16px] text-slate-700 leading-relaxed space-y-4">
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">1. The belt is the whole point</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The motor in the head runs at <b>one speed and one speed only</b> &mdash; about 1400 rpm, whatever you are doing.</li>
+                        <li>Everything else comes from where the <b>belt</b> sits. Lift the guard and you can see two stepped pulleys, one on the motor and one on the spindle, facing each other the opposite way up.</li>
+                        <li>A belt does not stretch or slip, so the same length of belt passes over both pulleys every second. That single fact gives you the whole rule:
+                            <span class="mono">n<sub>1</sub> &times; d<sub>1</sub> = n<sub>2</sub> &times; d<sub>2</sub></span>.</li>
+                        <li>Put the belt on a <b>big motor pulley driving a small spindle pulley</b> and the spindle spins faster than the motor. The other way round and it spins slower. Five pairs, five speeds, from 600 to 3267 rpm &mdash; a range of more than five to one, from a motor that never changes.</li>
+                        <li>This is the same rule as gears on a bicycle, and the same rule as the gears in the car gearbox: <b>you never get something for nothing</b>. Read on.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">2. Cutting speed: what the edge actually feels</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The spindle speed is not what matters to the drill. What matters is how fast the <b>cutting edge</b> travels through the metal, and that depends on how far out from the centre the edge is.</li>
+                        <li>The outer corner of the drill goes round a circle of circumference <span class="mono">&pi;D</span>. So the cutting speed is
+                            <span class="mono">V<sub>c</sub> = &pi; &times; D &times; n</span>, usually quoted in metres a minute.</li>
+                        <li>That is why a <b>wide bit must run slowly</b>. At 1400 rpm a 4 mm bit's edge does 18 m/min, which is gentle; a 20 mm bit's edge does 88 m/min, which will burn.</li>
+                        <li>Every material has a speed its edge can survive. Softwood will take about 90 m/min, aluminium about 70, mild steel only about 25. Go much past it and the edge gets hot enough to lose its hardness &mdash; and once it is blunt it is blunt.</li>
+                        <li>Turn the bit up to 20 mm on mild steel and read what the machine says. The right speed is under 400 rpm and the slowest step is 600, so <b>the machine cannot go slow enough</b>. That is a real limitation of a real bench drill, not a fault in the model.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">3. Speed and turning effort: the bargain</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The motor delivers a fixed <b>power</b>, and power is turning effort times turning speed:
+                            <span class="mono">P = &tau; &times; &omega;</span>.</li>
+                        <li>So if you gear for speed you lose torque, and if you gear for torque you lose speed. <b>Step 1 gives you five times the turning effort of step 5</b>, and one fifth of the rpm. The belt cannot create energy; it can only trade one thing for the other.</li>
+                        <li>There is a second limit, and it is not the motor. A belt can only pull so hard before it slips, and the torque it can pass to the spindle is that pull times the <b>spindle pulley's radius</b>. In bottom gear the spindle pulley is the big one, so the belt can carry a lot &mdash; but bottom gear is also where the motor is trying to deliver its greatest torque, and the two do not rise at the same rate.</li>
+                        <li>Work it through and the machine divides in two: in the <b>low</b> steps the belt gives way first, in the <b>high</b> steps the motor does. Find the step where the changeover happens &mdash; the read-out names the limit you are up against, so you can hunt for it.</li>
+                        <li>So gearing down does not buy you unlimited turning effort. Somewhere the drive gives up whichever way you go.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">4. Feed: how thick a chip you take</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Feed rate</b> is how fast the bit is pushed down. Divide it by the spindle speed and you get the <b>feed per revolution</b> &mdash; the thickness of the shaving each turn takes off.</li>
+                        <li>A thicker chip needs more force to shear, so the torque and the thrust both go up with feed. That is why forcing the drill makes it bog down.</li>
+                        <li><b>And here is the trap.</b> When the drill bogs down, changing down a step looks like the obvious cure &mdash; more torque. But hold the feed at the same millimetres a minute and halving the rpm <i>doubles</i> the feed per revolution, so the chip gets twice as thick and asks for twice the torque. The gain and the cost are the same factor and they cancel exactly. Against the <b>motor's</b> limit a gear change buys you nothing whatever; only a lighter feed or a smaller bit will do. Try it: stall it in top gear, then walk it down step by step and watch the two readings stay in the same ratio the whole way.</li>
+                        <li>Against the <b>belt's</b> limit it is a different story, because that limit does not scale with rpm &mdash; it is the pull times the spindle pulley's radius. There, changing step really does move the line, and it is changing <i>up</i> that helps.</li>
+                        <li>But feed is also the whole of how long the job takes: <span class="mono">t = thickness &divide; feed rate</span>. Feed too gently and the bit rubs instead of cutting, gets hot, and takes all day.</li>
+                        <li>Notice that <b>rpm does not appear in the time</b>. Spinning faster does not drill the hole faster; only feeding faster does. Speed decides whether the edge survives, feed decides how long it takes.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">5. The workpiece twists back</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The drill twists the metal. By Newton's third law the metal twists the drill back &mdash; and it twists the <b>whole workpiece</b> with exactly the same torque.</li>
+                        <li>The only thing stopping the workpiece spinning round is <b>friction</b> from the clamp: <span class="mono">F<sub>friction</sub> = &mu; &times; F<sub>clamp</sub></span>, acting at the bolt circle.</li>
+                        <li>Wind the clamp force down and drill a big hole in steel. The moment the drilling torque beats the friction, the workpiece snatches round. In a workshop that is how people lose fingers, and it is why you clamp the work and never hold it.</li>
+                        <li>It is worst just as the drill <b>breaks through</b> the far side, when the last thin web of metal tears rather than cuts, and the bit grabs.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">6. Try this</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Find the right gear.</b> Set a 12 mm bit in mild steel. Which belt step gets the cutting speed nearest 25 m/min? Now switch to wood without moving the belt &mdash; what happens to the cutting speed, and is it still right?</li>
+                        <li><b>Prove the bargain.</b> Note the torque on step 1, then move to step 5 without touching anything else. Multiply each torque by its rpm. Why are the two answers nearly the same?</li>
+                        <li>Press <b>Drill</b> and the machine switches on: the light on the head goes green, the motor winds up to speed, and only then does the drill go down &mdash; what the feed lever does is push an <i>already turning</i> drill into the work. When the hole is through and the quill is back up it switches off again, and you can watch the spindle <b>coast</b> to a stop long after the light has gone out. That is why you never reach for the chuck the moment you flick the switch.</li>
+                        <li><b>Make it stall.</b> Leave the belt in top gear and wind the feed up on steel. Does it stop because the motor runs out of power, or because the belt slips? The read-out will tell you which.</li>
+                        <li><b>Time it.</b> Double the spindle speed and predict the drilling time. Then double the feed rate and predict again. Only one of them changes the answer &mdash; which, and why?</li>
+                        <li><b>Let go of the work.</b> Take the clamp force to zero on a 16 mm hole in steel. At what torque does it let go, and where in the hole does it happen?</li>
+                    </ul>
+                </section>
+
+                <details class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <summary class="cursor-pointer font-bold text-slate-800">Physics behind the simulation</summary>
+                    <div class="pt-2 space-y-3">
+                        <div>
+                            <p class="mono text-slate-900">n<sub>spindle</sub> = n<sub>motor</sub> &times; d<sub>motor</sub> &divide; d<sub>spindle</sub></p>
+                            <p class="text-slate-500">The belt rule. The same belt speed over both pulleys.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">V<sub>c</sub> = &pi; &times; D &times; n &divide; 1000</p>
+                            <p class="text-slate-500">Cutting speed at the outer edge, in metres a minute for D in mm.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">f<sub>rev</sub> = feed rate &divide; n</p>
+                            <p class="text-slate-500">How far the drill advances each turn &mdash; the chip thickness.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">&tau; = k<sub>c</sub> &times; D&sup2; &times; f<sub>rev</sub> &divide; 8</p>
+                            <p class="text-slate-500">Torque the cut demands. k<sub>c</sub> is the material's specific cutting force.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">F<sub>thrust</sub> = k<sub>c</sub> &times; D &times; f<sub>rev</sub> &divide; 2</p>
+                            <p class="text-slate-500">The push down the quill has to supply.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">P = &tau; &times; &omega;, &nbsp; &omega; = 2&pi;n &divide; 60</p>
+                            <p class="text-slate-500">Power the cut asks of the motor.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">&tau;<sub>belt max</sub> = F<sub>belt</sub> &times; r<sub>spindle pulley</sub></p>
+                            <p class="text-slate-500">What the belt can pass on before it slips &mdash; less on a small pulley.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">&tau;<sub>hold</sub> = &mu; &times; F<sub>clamp</sub> &times; r<sub>clamp</sub></p>
+                            <p class="text-slate-500">What the clamp's friction can resist before the work spins.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">t = thickness &divide; feed rate</p>
+                            <p class="text-slate-500">Drilling time. Note what is not in it.</p>
+                        </div>
+
+                        <div class="border-t border-slate-200 pt-2">
+                            <p class="font-bold text-slate-800 mb-1">Assumptions, and what is left out</p>
+                            <ul class="list-disc pl-5 space-y-1 text-slate-500">
+                                <li>The cutting force model is the standard textbook approximation for a two-flute twist drill. Real cutting forces depend on the point angle, the web thickness, how sharp the drill is and whether it is cooled, none of which are modelled.</li>
+                                <li>The motor is treated as delivering constant power once up to speed, and as simply refusing to go beyond it. A real induction motor slows down under load and its torque curve is nothing like flat.</li>
+                                <li>Belt slip is modelled as a hard limit. A real belt slips progressively, squeals, gets hot and wears.</li>
+                                <li>The bit is assumed to stay sharp. Running it too fast is reported as a warning, but the edge never actually blunts and the readings never change because of it.</li>
+                                <li>Break-through grab is modelled as a rise in torque over the last part of the hole. The real effect depends on how the drill point is ground.</li>
+                                <li>No coolant, no pecking, no chip clearance problems in deep holes &mdash; all of which matter a great deal in a real workshop.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </details>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // =============================================================
+        //  Bench Drill — model
+        // =============================================================
+        // Millimetres, minutes for feeds and speeds, newtons and watts —
+        // the units a workshop actually uses, so the readings on screen are
+        // the ones off a real machine's chart.
+        //
+        // The motor never changes speed. Everything the machine can do comes
+        // from which pair of pulleys the belt is sitting on.
+        const MOTOR_RPM = 1400;
+        const MOTOR_W = 370;                  // a typical small bench drill
+        const DRIVE_EFF = 0.92;               // what survives the belt and bearings
+
+        // Five pairs, motor pulley against spindle pulley, in millimetres. The
+        // two cones face opposite ways up, which is what gives the spread.
+        const STEPS = [[30, 70], [40, 60], [50, 50], [60, 40], [70, 30]];
+        const stepRpm = i => MOTOR_RPM * STEPS[i][0] / STEPS[i][1];
+
+        // A belt can only pull so hard before it slips. What that allows at the
+        // spindle is the pull times the SPINDLE pulley's radius, so the limit
+        // moves with the step just as the speed does.
+        const BELT_F = 110;                   // N of usable pull before it slips
+
+        // Specific cutting force: how hard this stuff is to shear, in newtons
+        // per square millimetre of chip. And the speed its edge can survive.
+        const MATS = {
+            wood:  { name: 'Wood',       kc: 40,   vc: 90, hex: 0xd8b483, chip: 0xc9a875 },
+            alu:   { name: 'Aluminium',  kc: 600,  vc: 70, hex: 0xc3c8cf, chip: 0xdfe3e8 },
+            steel: { name: 'Mild Steel', kc: 1900, vc: 25, hex: 0x8b939e, chip: 0x6f7783 }
+        };
+
+        // holding the work down
+        const MU_CLAMP = 0.30;                // steel on a cast table
+        const R_CLAMP = 90;                   // mm out to the clamp bolts
+
+        const DEFAULTS = { bit: 8, feed: 60, thick: 20, clamp: 600 };
+        const P = Object.assign({}, DEFAULTS);
+
+        const state = {
+            mat: 'steel', step: 1,           // 933 rpm: about right for 8 mm in steel
+            running: false, done: false,
+            plunge: 0,                        // how far the quill has come down, mm
+            depth: 0,                         // how deep the hole is, mm
+            elapsed: 0,                       // seconds of drilling
+            spin: 0,                          // spindle angle, radians
+            beltPhase: 0,
+            spun: false,                      // has the workpiece torn loose?
+            fast: false, slow: false,
+            chips: true, guard: true, mesh: false, turntable: false, sound: true,
+            setupT: 1,                        // 0..1 while the stock is being clamped
+            shown: 8,                         // the drill diameter actually drawn, eased
+            power: false,                     // off until someone starts it, then left running
+            stalled: false,
+            spinRpm: 0,                       // what the spindle is really doing
+            viewMode: 'blueprint'          // the bench reads better on a dark ground
+        };
+
+        const $ = id => document.getElementById(id);
+        const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+        // ---- the chain of consequences, all from the belt and four sliders ----
+        const M = () => MATS[state.mat];
+        const rpm = () => stepRpm(state.step);
+        const omega = () => 2 * Math.PI * rpm() / 60;            // rad/s
+
+        // What the cutting edge feels: the rim of the drill sweeps pi*D every
+        // turn, so a wide bit at the same rpm is travelling much faster.
+        const cutSpeed = () => Math.PI * P.bit * rpm() / 1000;   // m/min
+        // and the speed this material would like
+        const idealRpm = () => M().vc * 1000 / (Math.PI * P.bit);
+        // how far off we are, as a ratio
+        const speedRatio = () => cutSpeed() / M().vc;
+
+        // How far the drill advances each turn — the thickness of the shaving.
+        const feedPerRev = () => P.feed / rpm();                 // mm/rev
+
+        // Breaking through the far side is the worst moment: the last web of
+        // metal tears rather than cuts and the drill snatches.
+        function breakoutFactor() {
+            const left = P.thick - state.depth;
+            if (state.depth <= 0 || left > P.bit * 0.35) return 1;
+            return 1 + 0.45 * (1 - left / (P.bit * 0.35));
+        }
+
+        // Torque and thrust the cut demands, from the standard two-flute
+        // approximation. kc is force per unit area of chip.
+        const cutTorque = () => M().kc * P.bit * P.bit * feedPerRev() / 8 / 1000 * breakoutFactor();
+        const thrust = () => M().kc * P.bit * feedPerRev() / 2 * breakoutFactor();
+        const cutPower = () => cutTorque() * omega();            // W
+
+        // What the drive can actually give at this step
+        const motorTorque = () => MOTOR_W * DRIVE_EFF / omega();          // N·m
+        const beltTorque = () => BELT_F * (STEPS[state.step][1] / 2) / 1000;
+        const driveTorque = () => Math.min(motorTorque(), beltTorque());
+        const limitedBy = () => beltTorque() < motorTorque() ? 'belt' : 'motor';
+        const overloaded = () => cutTorque() > driveTorque();
+
+        // The work is twisted just as hard as the drill, and only the clamp's
+        // friction holds it.
+        const holdTorque = () => MU_CLAMP * P.clamp * R_CLAMP / 1000;     // N·m
+        const willSpin = () => cutTorque() > holdTorque();
+
+        // If the drive gives up, is there a step that would carry this cut?
+        // Worth answering honestly rather than guessing: because the demand
+        // rises as 1/n just as the motor's torque does, a gear change is no
+        // help at all against the motor, and only ever helps against the belt.
+        function stepThatCarries() {
+            const was = state.step;
+            let found = -1;
+            for (let i = 0; i < 5; i++) {
+                state.step = i;
+                if (!overloaded()) { found = i; break; }
+            }
+            state.step = was;
+            return found;
+        }
+
+        // Time is feed and thickness, and nothing else. Spinning faster does
+        // not drill the hole any faster.
+        const drillTime = () => P.thick / P.feed * 60;                    // s
+        const mrr = () => Math.PI * P.bit * P.bit / 4 * P.feed;           // mm³/min
+
+        // =============================================================
+        //  The machine, in three dimensions
+        // =============================================================
+        // One millimetre is one unit. The spindle runs down the line x = 0,
+        // z = 0; the column stands behind it and the motor sits off to the left
+        // with the belt between the two pulley cones.
+        const COL_Z = -140, COL_R = 34;
+        const TABLE_TOP = 332;
+        // How far out the clamps sit. Wide enough that they are nowhere near
+        // the drill, so there is a clear view of the hole being cut.
+        const CLAMP_X = 88;
+        // The drive runs front to back: spindle pulley over the quill at z = 0,
+        // motor pulley behind the column, and the belt passing over the top of
+        // the column between them. The motor hangs under the belt deck.
+        const MOTOR_Z = -360;
+        // The vertical stack, each height derived from the one below it rather
+        // than written down on its own. Bottom to top: the drill point waits a
+        // little above the work, the chuck hangs above that, a short length of
+        // quill shows below the head, and the belt housing sits on top. Left as
+        // separate numbers these drift apart, and the machine ends up on stilts.
+        const REST_TIP = 400;                 // the drill point, quill fully up
+        const CHUCK_LEN = 96;
+        const CHUCK_NOSE = REST_TIP + 90;     // where the jaws grip
+        const QUILL_BOT = CHUCK_NOSE + 108;   // the quill's nose, clear of the chuck
+        const QUILL_SHOW = 40;                // how much quill shows at rest
+        const QUILL_ENGAGE = 30;              // still inside the head at full stroke
+        const HEAD_BOT = QUILL_BOT + QUILL_SHOW;
+        const HEAD_H = 160;
+        const HEAD_TOP = HEAD_BOT + HEAD_H;
+        const COL_TOP = HEAD_TOP;             // the column ends inside the head
+        const DECK_Y = HEAD_TOP + 8;          // floor of the belt housing
+        const PULLEY_Y = [0, 1, 2, 3, 4].map(i => HEAD_TOP + 30 + i * 26);
+        const GUARD_BOT = HEAD_TOP + 16, GUARD_TOP = GUARD_BOT + 154;
+        const GUARD_Z0 = 80, GUARD_Z1 = -424;              // how far it reaches
+        const GUARD_EDGE = 4;                              // the acrylic is 4 mm sheet
+        const PT_LEN = 9;                     // the ground point on the end of the bit
+
+        let scene, camera, renderer, controls;
+        let floor3, grid3, spindleGrp, quillGrp, bitMesh, chuckGrp;
+        let motorPul, spinPul, beltMesh, guardGrp, leverGrp;
+        let workGrp = null, stockGrp = null, workMesh = null, plugMesh = null, holeRing = null;
+        let chuckJaws = [], lampMesh = null;
+        const JAW_R = 3.4;                     // half a jaw at its WIDEST, so even the
+                                               // fattest part only touches the shank
+        let clampGrps = [], clampNuts = [];
+        let chipGrp = null, chips = [];
+        let gl = false;
+        const MAT = {};
+
+        function roundedBox(w, h, d, r) {
+            const bev = Math.min(1.5, w / 6, h / 6, d / 6);
+            const iw = Math.max(0.2, w - bev * 2), ih = Math.max(0.2, h - bev * 2);
+            const rr = Math.max(0.2, Math.min(r, iw / 2 - 0.05, ih / 2 - 0.05));
+            const sh = new THREE.Shape();
+            const x = -iw / 2, y = -ih / 2;
+            sh.moveTo(x + rr, y);
+            sh.lineTo(x + iw - rr, y);
+            sh.quadraticCurveTo(x + iw, y, x + iw, y + rr);
+            sh.lineTo(x + iw, y + ih - rr);
+            sh.quadraticCurveTo(x + iw, y + ih, x + iw - rr, y + ih);
+            sh.lineTo(x + rr, y + ih);
+            sh.quadraticCurveTo(x, y + ih, x, y + ih - rr);
+            sh.lineTo(x, y + rr);
+            sh.quadraticCurveTo(x, y, x + rr, y);
+            const g = new THREE.ExtrudeGeometry(sh, {
+                depth: Math.max(0.2, d - bev * 2), bevelEnabled: true,
+                bevelSize: bev, bevelThickness: bev, bevelSegments: 2, curveSegments: 5
+            });
+            g.center();
+            return g;
+        }
+
+        // A twist drill's flutes are two helical grooves. Drawn as a wrapped
+        // texture they cost nothing and, crucially, they let you see the thing
+        // turning — a plain cylinder spinning looks completely still.
+        let fluteTex = null;
+        function fluteTexture() {
+            if (fluteTex) return fluteTex;
+            const c = document.createElement('canvas');
+            c.width = 128; c.height = 128;
+            const g = c.getContext('2d');
+            g.fillStyle = '#d9ab3c'; g.fillRect(0, 0, 128, 128);   // titanium-nitride gold
+            g.strokeStyle = '#8a6414'; g.lineWidth = 22; g.lineCap = 'butt';
+            for (let k = -2; k <= 2; k++) {
+                g.beginPath();
+                g.moveTo(k * 64, 0); g.lineTo(k * 64 + 64, 128); g.stroke();
+            }
+            fluteTex = new THREE.CanvasTexture(c);
+            fluteTex.wrapS = fluteTex.wrapT = THREE.RepeatWrapping;
+            fluteTex.repeat.set(1, 4);
+            return fluteTex;
+        }
+
+        // A stripe of paint down one side of the cone. Lathe UVs run around the
+        // circumference, so one stripe in the texture is one stripe on the
+        // casting, hugging every step of it however the diameter changes.
+        let pulleyTex = null;
+        function pulleyTexture() {
+            if (pulleyTex) return pulleyTex;
+            const c = document.createElement('canvas');
+            c.width = 256; c.height = 8;
+            const g = c.getContext('2d');
+            g.fillStyle = '#b4bac4'; g.fillRect(0, 0, 256, 8);   // cast aluminium
+            g.fillStyle = '#4a515b'; g.fillRect(4, 0, 9, 8);     // the painted mark
+            pulleyTex = new THREE.CanvasTexture(c);
+            pulleyTex.wrapS = pulleyTex.wrapT = THREE.RepeatWrapping;
+            return pulleyTex;
+        }
+
+        // Ribs across the belt, so it can be seen actually travelling rather
+        // than sitting there while the pulleys turn under it.
+        let beltTex = null;
+        function beltTexture() {
+            if (beltTex) return beltTex;
+            const c = document.createElement('canvas');
+            c.width = 64; c.height = 8;
+            const g = c.getContext('2d');
+            g.fillStyle = '#24272c'; g.fillRect(0, 0, 64, 8);
+            g.fillStyle = '#3c4148'; g.fillRect(0, 0, 26, 8);
+            g.fillStyle = '#171a1e'; g.fillRect(30, 0, 6, 8);
+            beltTex = new THREE.CanvasTexture(c);
+            beltTex.wrapS = beltTex.wrapT = THREE.RepeatWrapping;
+            return beltTex;
+        }
+
+        // the teeth round the chuck ring that the key bites into
+        let knurlTex = null;
+        function knurlTexture() {
+            if (knurlTex) return knurlTex;
+            const c = document.createElement('canvas');
+            c.width = 256; c.height = 32;
+            const g = c.getContext('2d');
+            g.fillStyle = '#808790'; g.fillRect(0, 0, 256, 32);
+            for (let i = 0; i < 48; i++) {
+                const x = i * 256 / 48;
+                g.fillStyle = '#ffffff'; g.fillRect(x, 4, 256 / 48 * 0.45, 24);
+                g.fillStyle = '#2b3038'; g.fillRect(x + 256 / 48 * 0.45, 4, 256 / 48 * 0.3, 24);
+            }
+            knurlTex = new THREE.CanvasTexture(c);
+            knurlTex.wrapS = knurlTex.wrapT = THREE.RepeatWrapping;
+            return knurlTex;
+        }
+
+        // the maker's badge on the front of the head
+        function badgeTexture() {
+            const c = document.createElement('canvas');
+            c.width = 368; c.height = 120;
+            const g = c.getContext('2d');
+            g.fillStyle = '#999999'; g.fillRect(0, 0, 368, 120);
+            g.fillStyle = '#ffffff';
+            g.font = 'bold 62px Inter, sans-serif';
+            g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.fillText('TCE-LAB', 184, 62);
+            return new THREE.CanvasTexture(c);
+        }
+
+        // The stock on the table should look like what you chose, not just be
+        // tinted like it: wood has grain and knots, aluminium is brushed, mild
+        // steel has the dull mottle of hot-rolled bar.
+        const stockTex = {};
+        function stockTexture(kind) {
+            if (stockTex[kind]) return stockTex[kind];
+            const c = document.createElement('canvas');
+            c.width = c.height = 256;
+            const g = c.getContext('2d');
+            if (kind === 'wood') {
+                g.fillStyle = '#d8b483'; g.fillRect(0, 0, 256, 256);
+                for (let i = 0; i < 46; i++) {
+                    const y = Math.random() * 256;
+                    g.strokeStyle = 'rgba(140,96,52,' + (0.06 + Math.random() * 0.2) + ')';
+                    g.lineWidth = 0.7 + Math.random() * 2.6;
+                    g.beginPath(); g.moveTo(0, y);
+                    for (let x = 0; x <= 256; x += 16)
+                        g.lineTo(x, y + Math.sin(x / 38 + i) * 5);
+                    g.stroke();
+                }
+                for (let k = 0; k < 2; k++) {           // a knot or two
+                    const kx = 40 + Math.random() * 176, ky = 40 + Math.random() * 176;
+                    for (let r = 13; r > 0; r -= 2.2) {
+                        g.strokeStyle = 'rgba(120,78,40,0.4)'; g.lineWidth = 1.4;
+                        g.beginPath(); g.ellipse(kx, ky, r, r * 0.62, 0.5, 0, 7); g.stroke();
+                    }
+                }
+            } else if (kind === 'alu') {
+                g.fillStyle = '#c3c8cf'; g.fillRect(0, 0, 256, 256);
+                for (let i = 0; i < 900; i++) {         // brushed
+                    const y = Math.random() * 256, w = 20 + Math.random() * 90;
+                    g.strokeStyle = 'rgba(255,255,255,' + (Math.random() * 0.28) + ')';
+                    g.lineWidth = 0.6;
+                    g.beginPath(); g.moveTo(Math.random() * 256, y); g.lineTo(Math.random() * 256 + w, y); g.stroke();
+                    g.strokeStyle = 'rgba(110,120,132,' + (Math.random() * 0.22) + ')';
+                    g.beginPath(); g.moveTo(Math.random() * 256, y + 1); g.lineTo(Math.random() * 256 + w, y + 1); g.stroke();
+                }
+            } else {
+                g.fillStyle = '#8b939e'; g.fillRect(0, 0, 256, 256);
+                for (let i = 0; i < 1500; i++) {        // hot-rolled mottle
+                    const r = 1 + Math.random() * 5;
+                    g.fillStyle = 'rgba(' + (Math.random() < 0.5 ? '60,66,74,' : '170,178,188,')
+                                + (Math.random() * 0.2) + ')';
+                    g.beginPath();
+                    g.arc(Math.random() * 256, Math.random() * 256, r, 0, 7); g.fill();
+                }
+            }
+            const t = new THREE.CanvasTexture(c);
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.repeat.set(1 / 70, 1 / 70);              // one tile every 70 mm
+            stockTex[kind] = t;
+            return t;
+        }
+
+        // and the rating plate on the motor, which is where the 370 W comes from
+        function ratingTexture() {
+            const c = document.createElement('canvas');
+            c.width = 296; c.height = 184;
+            const g = c.getContext('2d');
+            g.fillStyle = '#cfd6de'; g.fillRect(0, 0, 296, 184);
+            g.strokeStyle = '#6d7681'; g.lineWidth = 4; g.strokeRect(8, 8, 280, 168);
+            g.fillStyle = '#20262d'; g.textAlign = 'left';
+            g.font = 'bold 26px sans-serif'; g.fillText('INDUCTION MOTOR', 24, 46);
+            g.font = '24px sans-serif';
+            g.fillText(MOTOR_W + ' W    ' + MOTOR_RPM + ' r/min', 24, 90);
+            g.fillText('230 V ~ 50 Hz', 24, 124);
+            g.fillText('S1  CONT.', 24, 156);
+            return new THREE.CanvasTexture(c);
+        }
+
+        function init3D() {
+            const host = $('view3d');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf1f5f9);
+
+            camera = new THREE.PerspectiveCamera(42, 1, 20, 9000);
+            camera.position.set(1150, 1180, 1400);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            host.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.minDistance = 200;
+            controls.maxDistance = 5000;
+            controls.maxPolarAngle = Math.PI / 2 + 0.02;
+            controls.autoRotateSpeed = 0.9;
+            controls.target.set(0, 470, -40);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.26));
+            const key = new THREE.DirectionalLight(0xffffff, 0.72);
+            key.position.set(900, 1600, 1100);
+            key.castShadow = true;
+            key.shadow.mapSize.width = key.shadow.mapSize.height = 2048;
+            key.shadow.camera.left = -1200; key.shadow.camera.right = 1200;
+            key.shadow.camera.top = 1600; key.shadow.camera.bottom = -400;
+            key.shadow.camera.far = 4200;
+            key.shadow.bias = -0.0006;
+            scene.add(key);
+            const fill = new THREE.DirectionalLight(0xbfd4f0, 0.24);
+            fill.position.set(-1100, 800, -900); scene.add(fill);
+            const rim = new THREE.DirectionalLight(0xffffff, 0.26);
+            rim.position.set(0, 700, -1600); scene.add(rim);
+
+            // A metal surface shows you its surroundings and almost nothing
+            // else, so without something to reflect, chrome renders black.
+            // This is a workshop in eight brush strokes: a bright ceiling with
+            // two strip lights, a wall, and a grey floor.
+            const ec = document.createElement('canvas');
+            ec.width = 256; ec.height = 128;
+            const eg = ec.getContext('2d');
+            const sky = eg.createLinearGradient(0, 0, 0, 128);
+            sky.addColorStop(0, '#9fa9b6'); sky.addColorStop(0.42, '#7d8794');
+            sky.addColorStop(0.52, '#525a66'); sky.addColorStop(1, '#2e343c');
+            eg.fillStyle = sky; eg.fillRect(0, 0, 256, 128);
+            eg.fillStyle = '#ffffff';                      // two strip lights
+            eg.fillRect(28, 10, 88, 13); eg.fillRect(150, 10, 88, 13);
+            const pm = new THREE.PMREMGenerator(renderer);
+            pm.compileEquirectangularShader();
+            const et = new THREE.CanvasTexture(ec);
+            et.mapping = THREE.EquirectangularReflectionMapping;
+            scene.environment = pm.fromEquirectangular(et).texture;
+            et.dispose(); pm.dispose();
+
+            floor3 = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000),
+                new THREE.MeshStandardMaterial({ color: 0xdbe1ea, roughness: 0.92 }));
+            floor3.rotation.x = -Math.PI / 2;
+            floor3.position.y = -1;
+            floor3.receiveShadow = true;
+            scene.add(floor3);
+            grid3 = new THREE.GridHelper(6000, 60, 0x94a3b8, 0xcbd5e1);
+            scene.add(grid3);
+
+            // The colours of the machine in the corner of every school
+            // workshop: cream enamel over cast iron, a black motor, bright
+            // chrome on anything that has to slide.
+            MAT.cast   = new THREE.MeshStandardMaterial({ color: 0xded7c4, roughness: 0.62, metalness: 0.12 });
+            MAT.cast2  = new THREE.MeshStandardMaterial({ color: 0xcec6b1, roughness: 0.66, metalness: 0.10 });
+            MAT.mach   = new THREE.MeshStandardMaterial({ color: 0x8d9299, roughness: 0.34, metalness: 0.62 });
+            MAT.steel  = new THREE.MeshStandardMaterial({ color: 0xb9bfc9, metalness: 0.68, roughness: 0.22 });
+            // ground and polished steel: darker than it looks, and almost all
+            // of what you see on it is the workshop reflected back at you
+            MAT.chrome = new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.98, roughness: 0.07 });
+            MAT.dark   = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.6, metalness: 0.2 });
+            MAT.belt   = new THREE.MeshStandardMaterial({
+                color: 0xffffff, map: beltTexture(), roughness: 0.88 });
+            MAT.pulley = new THREE.MeshStandardMaterial({
+                color: 0xffffff, map: pulleyTexture(), roughness: 0.34, metalness: 0.72 });
+            MAT.motor  = new THREE.MeshStandardMaterial({ color: 0x3d434c, roughness: 0.44, metalness: 0.46 });
+            // Clear acrylic, so the belt can be watched without opening it —
+            // which is what a school machine's guard is made of anyway.
+            // Cast acrylic. What makes a sheet of it read as glass rather than
+            // tinted film is the specular: it is almost perfectly smooth, so it
+            // throws hard reflections of whatever is above it, and it goes
+            // brighter at glancing angles.
+            MAT.guard  = new THREE.MeshPhysicalMaterial({
+                color: 0xf4f8fa, transparent: true, opacity: 0.20,
+                roughness: 0.015, metalness: 0, reflectivity: 0.68,
+                clearcoat: 1, clearcoatRoughness: 0.015,
+                side: THREE.DoubleSide, depthWrite: false });
+            MAT.bench  = new THREE.MeshStandardMaterial({ color: 0xc8cdd4, roughness: 0.46, metalness: 0.3 });
+            MAT.cable  = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.72, metalness: 0.12 });
+
+            // The environment is there so the metal has something to reflect.
+            // Painted castings should barely feel it, or the cream washes out
+            // to plain white and the machine loses all its shape.
+            MAT.cast.envMapIntensity = MAT.cast2.envMapIntensity = 0.22;
+            // 4 mm cast acrylic, seen end-on at the edges
+            MAT.guardEdge = new THREE.MeshPhysicalMaterial({
+                color: 0xeef4f7, transparent: true, opacity: 0.66,
+                roughness: 0.015, metalness: 0, reflectivity: 0.75,
+                clearcoat: 1, clearcoatRoughness: 0.015,
+                side: THREE.DoubleSide, depthWrite: false });
+            MAT.guard.envMapIntensity = 2.8;
+            MAT.guardEdge.envMapIntensity = 3.2;
+            MAT.motor.envMapIntensity = 0.8;
+            MAT.belt.envMapIntensity = 0.25;
+            MAT.dark.envMapIntensity = 0.4;
+            MAT.gold   = new THREE.MeshStandardMaterial({ color: 0xd6a933, metalness: 0.78, roughness: 0.28 });
+            MAT.chuckSteel = new THREE.MeshStandardMaterial({ color: 0xc2c8d1, metalness: 0.76, roughness: 0.22 });
+            MAT.chuckBand = new THREE.MeshStandardMaterial({
+                color: 0x2b2f36, metalness: 0.62, roughness: 0.36,
+                bumpMap: knurlTexture(), bumpScale: 1.1 });
+            MAT.gold.envMapIntensity = 1.25;
+            MAT.chuckSteel.envMapIntensity = 1.4;
+            MAT.chuckBand.envMapIntensity = 0.85;
+            MAT.pulley.envMapIntensity = 1.25;
+            // The quill is a darker steel than the bright column it hangs in
+            // front of — otherwise the two merge into one shape head-on.
+            MAT.quill  = new THREE.MeshStandardMaterial({ color: 0x5c636d, metalness: 0.92, roughness: 0.19 });
+            MAT.quill.envMapIntensity = 1.3;
+            MAT.chrome.envMapIntensity = 2.1;   // the column is a mirror, near enough
+            MAT.mach.envMapIntensity = 1.3;
+            MAT.steel.envMapIntensity = 1.2;
+
+            buildMachine();
+            buildWork();
+        }
+
+        // A flat slab with a round hole straight through it — the drill press
+        // table, so the bit has somewhere to go when it breaks out the far side.
+        function holeSlab(w, d, h, r) {
+            const sh = new THREE.Shape();
+            const b = 6;
+            sh.moveTo(-w / 2 + b, -d / 2);
+            sh.lineTo(w / 2 - b, -d / 2); sh.quadraticCurveTo(w / 2, -d / 2, w / 2, -d / 2 + b);
+            sh.lineTo(w / 2, d / 2 - b);  sh.quadraticCurveTo(w / 2, d / 2, w / 2 - b, d / 2);
+            sh.lineTo(-w / 2 + b, d / 2); sh.quadraticCurveTo(-w / 2, d / 2, -w / 2, d / 2 - b);
+            sh.lineTo(-w / 2, -d / 2 + b); sh.quadraticCurveTo(-w / 2, -d / 2, -w / 2 + b, -d / 2);
+            const hole = new THREE.Path();
+            hole.absarc(0, 0, r, 0, Math.PI * 2, true);
+            sh.holes.push(hole);
+            const g = new THREE.ExtrudeGeometry(sh, { depth: h, bevelEnabled: false, curveSegments: 26 });
+            g.rotateX(-Math.PI / 2);           // lay it flat: it now spans y = 0..h
+            g.translate(0, -h, 0);             // drop it so the top face is at y = 0
+            return g;
+        }
+
+        // A stepped cone pulley, turned as one casting. Each step is a V-sheave:
+        // two coned flanges with a groove between them, and the belt grips on
+        // the sloping sides rather than sitting on the bottom. The numbers in
+        // STEPS are the pitch diameters — the circle the belt actually runs on,
+        // which is what the ratio is worked out from — so the flanges stand a
+        // little proud of them.
+        const SH_H = 13;                      // half the height of one sheave
+        const RIM = 3, ROOT = 4.5;            // flange above, groove below, the pitch line
+        function coneGeometry(dias) {
+            const pts = [];
+            const hub = 11.5;
+            pts.push(new THREE.Vector2(hub, PULLEY_Y[0] - SH_H));
+            dias.forEach((d, i) => {
+                const y = PULLEY_Y[i], rim = d / 2 + RIM, root = d / 2 - ROOT;
+                pts.push(new THREE.Vector2(rim, y - SH_H));
+                pts.push(new THREE.Vector2(root, y));
+                pts.push(new THREE.Vector2(rim, y + SH_H));
+            });
+            pts.push(new THREE.Vector2(hub, PULLEY_Y[4] + SH_H));
+            return new THREE.LatheGeometry(pts, 40);
+        }
+
+        // The speed chart riveted to the front of every drill press: which pair
+        // of pulleys gives which rpm. The row you are on is picked out.
+        let specTex = null, specCv = null;
+        function drawSpec() {
+            if (!specCv) { specCv = document.createElement('canvas'); specCv.width = 256; specCv.height = 320; }
+            const c = specCv.getContext('2d');
+            c.fillStyle = '#14181d'; c.fillRect(0, 0, 256, 320);
+            c.fillStyle = '#c9d2dd'; c.font = 'bold 26px sans-serif'; c.textAlign = 'center';
+            c.fillText('SPINDLE SPEED', 128, 40);
+            c.fillStyle = '#7c8794'; c.font = '17px sans-serif';
+            c.fillText('r / min', 128, 64);
+            for (let i = 0; i < 5; i++) {
+                const y = 90 + i * 44, on = i === state.step;
+                if (on) { c.fillStyle = '#d24b2f'; c.fillRect(12, y, 232, 38); }
+                c.fillStyle = on ? '#ffffff' : '#9aa5b1';
+                c.font = (on ? 'bold ' : '') + '24px sans-serif';
+                c.textAlign = 'left';  c.fillText(String.fromCharCode(65 + i), 30, y + 28);
+                c.textAlign = 'right'; c.fillText(stepRpm(i).toFixed(0), 228, y + 28);
+            }
+            if (specTex) specTex.needsUpdate = true;
+        }
+
+        // The plan of the belt housing: square across the front where it meets
+        // the head, and swept round the back in a half circle about the motor
+        // pulley — which is the shape you get if you wrap a cover round two
+        // pulleys and a belt.
+        function housingPath(w, zFront, zBack, rf, path) {
+            const back = zBack + w / 2;
+            path.moveTo(-w / 2, zFront - rf);
+            path.quadraticCurveTo(-w / 2, zFront, -w / 2 + rf, zFront);
+            path.lineTo(w / 2 - rf, zFront);
+            path.quadraticCurveTo(w / 2, zFront, w / 2, zFront - rf);
+            path.lineTo(w / 2, back);
+            path.absarc(0, back, w / 2, 0, -Math.PI, true);
+            path.lineTo(-w / 2, zFront - rf);
+            return path;
+        }
+        function standUp(sh, h) {
+            const g = new THREE.ExtrudeGeometry(sh, { depth: h, bevelEnabled: false, curveSegments: 22 });
+            g.rotateX(Math.PI / 2);            // the shape's y becomes world z
+            g.translate(0, h, 0);              // and it now stands from y = 0 to h
+            return g;
+        }
+        function housingGeo(w, zFront, zBack, h, rf) {
+            return standUp(housingPath(w, zFront, zBack, rf, new THREE.Shape()), h);
+        }
+        // The same outline, but hollow: a band round the perimeter only. A rim
+        // has to be a ring — as a solid slab it becomes a lid, and you can no
+        // longer see down through the top of the case.
+        function housingRing(w, zFront, zBack, h, rf, wall) {
+            const sh = housingPath(w, zFront, zBack, rf, new THREE.Shape());
+            sh.holes.push(housingPath(w - 2 * wall, zFront - wall, zBack + wall,
+                                      Math.max(2, rf - wall), new THREE.Path()));
+            return standUp(sh, h);
+        }
+
+        // A cable slung between two points, drooping under its own weight, with
+        // a gland where it enters at each end.
+        function cable(a, b, sag, r) {
+            const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+            mid.y -= sag;
+            const curve = new THREE.CatmullRomCurve3([a, mid, b]);
+            const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 26, r, 8, false), MAT.cable);
+            tube.castShadow = true; scene.add(tube);
+            [[a, curve.getTangent(0)], [b, curve.getTangent(1)]].forEach(([p, t]) => {
+                const gl = new THREE.Mesh(new THREE.CylinderGeometry(r + 3.2, r + 2, 11, 12), MAT.mach);
+                gl.position.copy(p);
+                gl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), t.clone().normalize());
+                scene.add(gl);
+            });
+        }
+
+        function buildMachine() {
+            // --- base and column ---
+            const base = new THREE.Mesh(roundedBox(380, 40, 320, 12), MAT.cast);
+            base.position.set(0, 20, -70);
+            base.castShadow = base.receiveShadow = true; scene.add(base);
+            // the two machined pads let the base sit flat on the bench
+            [-108, 108].forEach(sz => {
+                const pad = new THREE.Mesh(roundedBox(300, 5, 86, 3), MAT.dark);
+                pad.position.set(0, 41, -70 + sz); scene.add(pad);
+            });
+            [[-150, -190], [150, -190], [-150, 50], [150, 50]].forEach(([bx, bz]) => {
+                const bolt = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 8, 12), MAT.mach);
+                bolt.position.set(bx, 42, bz); scene.add(bolt);
+            });
+
+            const colH = COL_TOP - 40;
+            const col = new THREE.Mesh(new THREE.CylinderGeometry(COL_R, COL_R, colH, 28), MAT.chrome);
+            col.position.set(0, 40 + colH / 2, COL_Z);
+            col.castShadow = true; scene.add(col);
+            const colFoot = new THREE.Mesh(new THREE.CylinderGeometry(COL_R + 14, COL_R + 22, 34, 28), MAT.cast);
+            colFoot.position.set(0, 55, COL_Z); scene.add(colFoot);
+
+            // --- table on its collar, with the lock handle that sets its height ---
+            const collar = new THREE.Mesh(new THREE.CylinderGeometry(COL_R + 16, COL_R + 16, 74, 24), MAT.cast);
+            collar.position.set(0, TABLE_TOP - 48, COL_Z);
+            collar.castShadow = true; scene.add(collar);
+            // The clamp that locks the table at its height: a boss cast on the
+            // collar, and a lever hung off the end of it. The lever is built
+            // outwards from the pivot rather than placed by eye, so the two
+            // cannot drift apart.
+            const LOCK_X = COL_R + 26, LOCK_Y = TABLE_TOP - 48;
+            const BOSS_L = 40, PIVOT_X = LOCK_X + BOSS_L / 2 - 4;
+            const lockBoss = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, BOSS_L, 14), MAT.cast);
+            lockBoss.rotation.z = Math.PI / 2;
+            lockBoss.position.set(LOCK_X, LOCK_Y, COL_Z);
+            lockBoss.castShadow = true; scene.add(lockBoss);
+
+            const lockGrp = new THREE.Group();
+            lockGrp.position.set(PIVOT_X, LOCK_Y, COL_Z);
+            lockGrp.rotation.z = -0.72;                 // swung down, as you would leave it
+            const collarNut = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 14, 6), MAT.mach);
+            collarNut.rotation.z = Math.PI / 2; lockGrp.add(collarNut);
+            const lockLever = new THREE.Mesh(new THREE.CylinderGeometry(6, 6.5, 84, 12), MAT.dark);
+            lockLever.rotation.z = -Math.PI / 2;        // lay it along the group's own +x
+            lockLever.position.x = 42;                  // base at the pivot
+            lockLever.castShadow = true; lockGrp.add(lockLever);
+            const lockKnob = new THREE.Mesh(new THREE.SphereGeometry(10.5, 16, 12), MAT.dark);
+            lockKnob.position.x = 88; lockKnob.castShadow = true; lockGrp.add(lockKnob);
+            scene.add(lockGrp);
+
+            const arm = new THREE.Mesh(roundedBox(90, 44, 150, 8), MAT.cast);
+            arm.position.set(0, TABLE_TOP - 40, COL_Z + 82);
+            arm.castShadow = true; scene.add(arm);
+            const table = new THREE.Mesh(holeSlab(340, 250, 26, 26), MAT.cast);
+            table.position.set(0, TABLE_TOP, 0);
+            table.castShadow = table.receiveShadow = true; scene.add(table);
+            // the T-slots a clamp bolts into
+            [-CLAMP_X, CLAMP_X].forEach(sx => {
+                const ts = new THREE.Mesh(new THREE.BoxGeometry(20, 5, 200), MAT.dark);
+                ts.position.set(sx, TABLE_TOP - 1.6, 0); scene.add(ts);
+            });
+
+            // --- head casting: quill at the front, wrapped round the column behind ---
+            const head = new THREE.Mesh(roundedBox(230, HEAD_H, 300, 16), MAT.cast);
+            head.position.set(0, HEAD_BOT + HEAD_H / 2, -70);
+            head.castShadow = true; scene.add(head);
+            const quillBoss = new THREE.Mesh(new THREE.CylinderGeometry(46, 46, 150, 24), MAT.cast);
+            quillBoss.position.set(0, HEAD_BOT + 60, 0);
+            quillBoss.castShadow = true; scene.add(quillBoss);
+
+            // the speed chart on the front of the head
+            specTex = new THREE.CanvasTexture((drawSpec(), specCv));
+            const spec = new THREE.Mesh(new THREE.PlaneGeometry(72, 90),
+                new THREE.MeshStandardMaterial({ map: specTex, roughness: 0.45 }));
+            spec.position.set(-64, HEAD_BOT + 66, 81); scene.add(spec);
+            // and the maker's badge above it
+            const badge = new THREE.Mesh(new THREE.PlaneGeometry(96, 26),
+                new THREE.MeshStandardMaterial({ map: badgeTexture(), roughness: 0.4 }));
+            badge.position.set(56, HEAD_BOT + 108, 81); scene.add(badge);
+
+            // The running light. Green while the spindle is turning, red the
+            // moment the cut stops it — so a stall is something you SEE on the
+            // machine, not only in the read-out.
+            const bezel = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 9, 20), MAT.mach);
+            bezel.rotation.x = Math.PI / 2;
+            bezel.position.set(56, HEAD_BOT + 62, 79); scene.add(bezel);
+            MAT.lamp = new THREE.MeshStandardMaterial({
+                color: 0x1c8f4a, emissive: 0x22c55e, emissiveIntensity: 1.1,
+                roughness: 0.25, metalness: 0 });
+            lampMesh = new THREE.Mesh(new THREE.SphereGeometry(8.5, 18, 14), MAT.lamp);
+            lampMesh.position.set(56, HEAD_BOT + 62, 84); scene.add(lampMesh);
+
+            // --- the belt deck: the floor of the housing, and what the motor
+            //     hangs from at the back ---
+            const deck = new THREE.Mesh(
+                housingGeo(210, GUARD_Z0 - 10, GUARD_Z1 + 10, 16, 8), MAT.cast2);
+            deck.position.set(0, DECK_Y - 8, 0);
+            deck.castShadow = true; scene.add(deck);
+
+            // --- the two pulley cones, facing opposite ways up ---
+            const pulGrp = new THREE.Group(); scene.add(pulGrp);
+            motorPul = new THREE.Group(); motorPul.position.set(0, 0, MOTOR_Z);
+            spinPul  = new THREE.Group(); spinPul.position.set(0, 0, 0);
+            pulGrp.add(motorPul); pulGrp.add(spinPul);
+            const mCone = new THREE.Mesh(coneGeometry(STEPS.map(s => s[0])), MAT.pulley);
+            mCone.castShadow = true; motorPul.add(mCone);
+            const sCone = new THREE.Mesh(coneGeometry(STEPS.map(s => s[1])), MAT.pulley);
+            sCone.castShadow = true; spinPul.add(sCone);
+            // A turned cone is the same all the way round, so a spinning one
+            // looks still. The mark is painted into the pulley's own texture,
+            // which follows the steps instead of standing off them.
+
+            // --- the motor, slung under the deck behind the column ---
+            const mShaft = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 70, 14), MAT.mach);
+            mShaft.position.set(0, DECK_Y + 4, MOTOR_Z); scene.add(mShaft);
+            // The motor is a big black barrel slung off the back of the head,
+            // and it wants to be seen: it is where the 370 W comes from, and
+            // half the point of the machine is that it only ever runs at one
+            // speed. So it hangs below the head line and carries its rating
+            // plate on the outboard face, not tucked in behind the casting.
+            const MB = DECK_Y - 8;                       // the motor hangs from here
+            const MR = 92, ML = 190;
+            const mBody = new THREE.Mesh(new THREE.CylinderGeometry(MR, MR, ML, 34), MAT.motor);
+            mBody.position.set(0, MB - ML / 2, MOTOR_Z);
+            mBody.castShadow = true; scene.add(mBody);
+            const mFoot = new THREE.Mesh(new THREE.CylinderGeometry(74, MR, 20, 34), MAT.motor);
+            mFoot.position.set(0, MB - 10, MOTOR_Z); scene.add(mFoot);
+            const mCap = new THREE.Mesh(new THREE.CylinderGeometry(MR, 68, 30, 34), MAT.motor);
+            mCap.position.set(0, MB - ML - 15, MOTOR_Z);
+            mCap.castShadow = true; scene.add(mCap);
+            const mBoss = new THREE.Mesh(new THREE.CylinderGeometry(26, 26, 14, 20), MAT.motor);
+            mBoss.position.set(0, MB - ML - 34, MOTOR_Z); scene.add(mBoss);
+            // the ring of cooling slots round the lower barrel
+            for (let k = 0; k < 22; k++) {
+                const a = k / 22 * Math.PI * 2;
+                const sl = new THREE.Mesh(new THREE.BoxGeometry(14, 66, 4), MAT.dark);
+                sl.position.set(Math.sin(a) * (MR - 1), MB - 140, MOTOR_Z + Math.cos(a) * (MR - 1));
+                sl.rotation.y = a; scene.add(sl);
+            }
+            // the terminal box, standing off the barrel on its own bracket
+            const term = new THREE.Mesh(roundedBox(48, 78, 56, 6), MAT.motor);
+            term.position.set(-MR - 34, MB - 62, MOTOR_Z);
+            term.castShadow = true; scene.add(term);
+            const lid = new THREE.Mesh(roundedBox(52, 8, 60, 3), MAT.dark);
+            lid.position.set(-MR - 34, MB - 20, MOTOR_Z); scene.add(lid);
+
+            // The wiring, which has to go somewhere and is worth showing: a
+            // flexible conduit out of the motor into its terminal box, and the
+            // supply from there across to the switch on the head. Both ends of
+            // each run get a gland, so no cable finishes in mid air.
+            cable(new THREE.Vector3(-MR + 2, MB - 44, MOTOR_Z),
+                  new THREE.Vector3(-MR - 34, MB - 30, MOTOR_Z), 16, 5.5);
+            cable(new THREE.Vector3(-MR - 40, MB - 96, MOTOR_Z),
+                  new THREE.Vector3(-96, HEAD_BOT + 34, -216), 54, 5);
+            // The plate the 370 W is written on, facing out where it can be
+            // read. It is riveted to a round barrel, so it has to be curved to
+            // the same radius — flat, its corners stand a centimetre off.
+            const PW = 84, PH = 52;                 // as measured round the curve
+            const arc = PW / MR;
+            const plate = new THREE.Mesh(
+                new THREE.CylinderGeometry(MR + 1.2, MR + 1.2, PH, 24, 1, true,
+                                           Math.PI / 2 - arc / 2, arc),
+                new THREE.MeshStandardMaterial({ map: ratingTexture(), roughness: 0.5 }));
+            plate.position.set(0, MB - 66, MOTOR_Z); scene.add(plate);
+
+            beltMesh = new THREE.Mesh(new THREE.BufferGeometry(), MAT.belt);
+            beltMesh.castShadow = true;
+            scene.add(beltMesh);
+            rebuildBelt();
+
+            // --- the lid over the belt: cream, hinged, and in the way of your
+            //     fingers, which is the whole point of it ---
+            guardGrp = new THREE.Group();
+            const gh = GUARD_TOP - GUARD_BOT;
+            const gShell = new THREE.Mesh(
+                housingGeo(240, GUARD_Z0, GUARD_Z1, gh, 26), MAT.guard);
+            gShell.position.set(0, GUARD_BOT, 0);
+            gShell.castShadow = true; guardGrp.add(gShell);
+            // The give-away that a pane is glass and not a tint is its EDGE:
+            // you look through 4 mm of material end-on there instead of
+            // through the face, so it goes dense and bright. A band top and
+            // bottom, standing a whisker proud, gives the sheet a thickness.
+            [[GUARD_BOT, GUARD_EDGE + 1, 2.4],
+             [GUARD_TOP - GUARD_EDGE * 2, GUARD_EDGE * 2, 4.5]].forEach(([y, t, proud]) => {
+                const rim = new THREE.Mesh(
+                    housingRing(240 + proud * 2, GUARD_Z0 + proud, GUARD_Z1 - proud, t, 26, 11),
+                    MAT.guardEdge);
+                rim.position.set(0, y, 0);
+                guardGrp.add(rim);
+            });
+            // The upright joints where the panels meet. On a real acrylic case
+            // these are the brightest thing on it — you are looking end-on
+            // through the full thickness of two sheets at once — and without
+            // them the side walls just fade out and the box loses its shape.
+            const GW = 240, GRF = 26;
+            const cx = GW / 2, cz = GUARD_Z0;
+            // the apex of each rounded front corner, off the quadratic
+            const fx = 0.25 * cx + 0.5 * cx + 0.25 * (cx - GRF);
+            const fz = 0.25 * (cz - GRF) + 0.5 * cz + 0.25 * cz;
+            // Only the front two. Where the straight sides run into the rear
+            // half-circle there is no joint to show — the wall flows straight
+            // on round, so a bead there would be inventing a seam.
+            [[fx, fz], [-fx, fz]].forEach(([px, pz]) => {
+                const post = new THREE.Mesh(
+                    new THREE.CylinderGeometry(3.4, 3.4, gh, 10), MAT.guardEdge);
+                post.position.set(px, GUARD_BOT + gh / 2, pz);
+                guardGrp.add(post);
+            });
+
+            const gLip = new THREE.Mesh(
+                housingGeo(252, GUARD_Z0 + 6, GUARD_Z1 - 6, 12, 28), MAT.cast2);
+            gLip.position.set(0, GUARD_BOT - 8, 0); guardGrp.add(gLip);
+            scene.add(guardGrp);
+
+            // --- quill, chuck and bit, all of which come down together ---
+            quillGrp = new THREE.Group(); scene.add(quillGrp);
+            // Long enough that its top is still up inside the head when the
+            // quill is wound all the way down.
+            const qLen = QUILL_SHOW + maxPlunge() + QUILL_ENGAGE;
+            const quill = new THREE.Mesh(new THREE.CylinderGeometry(24, 24, qLen, 24), MAT.quill);
+            quill.position.y = QUILL_BOT + qLen / 2;
+            quill.castShadow = true; quillGrp.add(quill);
+
+            spindleGrp = new THREE.Group();          // everything that turns
+            quillGrp.add(spindleGrp);
+            // A key-type chuck, turned the way a real one is: a stack of
+            // cylindrical bands rather than a smooth vase. Top to bottom —
+            // the arbor, two knurled grip bands, the bevel-gear crown the key
+            // winds, a short steel nose carrying the key socket, and a stub
+            // cone the three jaws come out of.
+            chuckGrp = new THREE.Group();
+            chuckGrp.position.y = CHUCK_NOSE;
+            // the nose bore has to swallow the widest drill in the rack
+            const prof = [[13, 0], [17.5, 7], [20, 13], [20, 29],
+                          [25.5, 31], [25.5, 44], [24, 46],
+                          [25, 48], [25, 60], [24, 62],
+                          [25, 64], [25, 76], [23, 79],
+                          [17, 84], [16, 85], [16, 96], [0, 96]];
+            const chBody = new THREE.Mesh(
+                new THREE.LatheGeometry(prof.map(p => new THREE.Vector2(p[0], p[1])), 40), MAT.chuckSteel);
+            chBody.castShadow = true; chuckGrp.add(chBody);
+            // the two knurled bands you grip to spin it up by hand
+            [54, 70].forEach(y => {
+                const band = new THREE.Mesh(new THREE.CylinderGeometry(25.4, 25.4, 12, 40), MAT.chuckBand);
+                band.position.y = y; band.castShadow = true; chuckGrp.add(band);
+            });
+            // the bevel-gear crown, and its teeth
+            const crown = new THREE.Mesh(new THREE.CylinderGeometry(25.6, 25.6, 13, 40), MAT.chuckBand);
+            crown.position.y = 37.5; crown.castShadow = true; chuckGrp.add(crown);
+            for (let k = 0; k < 18; k++) {
+                const a = k / 18 * Math.PI * 2;
+                const tooth = new THREE.Mesh(new THREE.BoxGeometry(3.6, 7, 5.2), MAT.chuckBand);
+                tooth.position.set(Math.cos(a) * 23.6, 29.5, Math.sin(a) * 23.6);
+                tooth.rotation.y = -a;
+                chuckGrp.add(tooth);
+            }
+            // the socket the key drops into, sunk in the nose barrel
+            const key = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.2, 8, 12), MAT.dark);
+            key.rotation.z = Math.PI / 2; key.position.set(18, 21, 0); chuckGrp.add(key);
+            // Three jaws in the nose, closing on the shank. Where they sit is
+            // not fixed: they wind in and out with the drill that is in them,
+            // which is the whole job of a chuck.
+            chuckJaws = [];
+            for (let k = 0; k < 3; k++) {
+                const a = k / 3 * Math.PI * 2;
+                // The face that grips runs PARALLEL to the shank — a chuck holds
+                // a drill along a line, not on one corner. The taper is on the
+                // outside of the jaw, where it has nothing to grip against.
+                const jaw = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.4, 18, 8), MAT.chuckSteel);
+                jaw.userData.a = a;
+                chuckGrp.add(jaw);
+                chuckJaws.push(jaw);
+            }
+            spindleGrp.add(chuckGrp);
+            // the spindle nose the chuck hangs from
+            const nose = new THREE.Mesh(new THREE.CylinderGeometry(19, 16, 26, 20), MAT.mach);
+            nose.position.y = CHUCK_NOSE + CHUCK_LEN + 11; spindleGrp.add(nose);
+
+            bitMesh = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 110, 20, 1, true),
+                new THREE.MeshStandardMaterial({ map: fluteTexture(), color: 0xffffff,
+                                                 metalness: 0.72, roughness: 0.3 }));
+            bitMesh.castShadow = true;
+            spindleGrp.add(bitMesh);
+            const point = new THREE.Mesh(new THREE.ConeGeometry(4, 9, 20), MAT.gold);
+            point.rotation.x = Math.PI;
+            bitMesh.userData.point = point;
+            spindleGrp.add(point);
+
+            // --- the feed lever ---
+            // The wheel has to stand clear of the casting on its own boss, or
+            // from the front it reads as three arms growing out of the head.
+            const LEVER_X = 152;
+            const boss = new THREE.Mesh(new THREE.CylinderGeometry(30, 34, 54, 20), MAT.cast);
+            boss.rotation.z = Math.PI / 2;
+            boss.position.set(114, HEAD_BOT + 40, 0);
+            boss.castShadow = true; scene.add(boss);
+
+            leverGrp = new THREE.Group();
+            leverGrp.position.set(LEVER_X, HEAD_BOT + 40, 0);
+            const hub = new THREE.Mesh(new THREE.CylinderGeometry(24, 24, 30, 20), MAT.mach);
+            hub.rotation.z = Math.PI / 2;
+            hub.castShadow = true; leverGrp.add(hub);
+            // Three arms in the plane at right angles to the hub's axis, so the
+            // wheel turns about x and winds the quill up and down.
+            for (let k = 0; k < 3; k++) {
+                const a = k / 3 * Math.PI * 2 + 0.4;
+                const dir = new THREE.Vector3(0, Math.cos(a), Math.sin(a));
+                const spoke = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 120, 12), MAT.chrome);
+                spoke.position.copy(dir).multiplyScalar(60);
+                spoke.rotation.x = a;          // the cylinder's own axis is y
+                spoke.castShadow = true; leverGrp.add(spoke);
+                const knob = new THREE.Mesh(new THREE.SphereGeometry(14, 16, 12), MAT.dark);
+                knob.position.copy(dir).multiplyScalar(126);
+                knob.castShadow = true; leverGrp.add(knob);
+            }
+            scene.add(leverGrp);
+
+            chipGrp = new THREE.Group(); scene.add(chipGrp);
+        }
+
+        // ---- the belt, wrapped round whichever pair it is on --------------
+        // An open belt runs along the two outer tangents and wraps the far side
+        // of each pulley. The tangent angle comes straight out of the two radii
+        // and the distance between the shafts.
+        // The path is built flat at y = 0 and the mesh is lifted to the step it
+        // is on, so the belt can be squashed into a V-belt section — wide across
+        // the pulley and thin through — without distorting where it runs.
+        function beltPath(step) {
+            const y = 0;
+            const r1 = STEPS[step][0] / 2, r2 = STEPS[step][1] / 2;
+            const c1z = MOTOR_Z, c2z = 0;                   // c2 lies along +z from c1
+            const d = Math.abs(c2z - c1z);
+            const al = Math.asin(clamp((r2 - r1) / d, -1, 1));
+            const au = Math.PI / 2 + al;
+            const lo = -Math.PI / 2 - al;
+            const pts = [];
+            // angles run from the +z axis towards +x, so the belt lies along z
+            const at = (cz, r, a) => new THREE.Vector3(r * Math.sin(a), y, cz + r * Math.cos(a));
+            pts.push(at(c1z, r1, au), at(c2z, r2, au));
+            for (let k = 1; k < 16; k++) pts.push(at(c2z, r2, au + (lo - au) * k / 16));
+            pts.push(at(c2z, r2, lo), at(c1z, r1, lo));
+            const end = au - 2 * Math.PI;
+            for (let k = 1; k < 16; k++) pts.push(at(c1z, r1, lo + (end - lo) * k / 16));
+            return pts;
+        }
+        function beltLength(step) {
+            const r1 = STEPS[step][0] / 2, r2 = STEPS[step][1] / 2;
+            const d = Math.abs(MOTOR_Z);
+            const al = Math.asin(clamp((r2 - r1) / d, -1, 1));
+            return 2 * d * Math.cos(al) + r2 * (Math.PI + 2 * al) + r1 * (Math.PI - 2 * al);
+        }
+        const BELT_T = 3.6, BELT_W = 2.0;      // half thickness, and how much taller
+        let beltRibs = 40;
+        function rebuildBelt() {
+            if (beltMesh.geometry) beltMesh.geometry.dispose();
+            const curve = new THREE.CatmullRomCurve3(beltPath(state.step), true);
+            beltMesh.geometry = new THREE.TubeGeometry(curve, 150, BELT_T, 10, true);
+            beltMesh.scale.y = BELT_W;         // 7 mm through, 14 mm across
+            beltMesh.position.y = PULLEY_Y[state.step];
+            // one rib every 22 mm or so, whatever the belt is doing
+            beltRibs = Math.max(8, Math.round(beltLength(state.step) / 22));
+            beltTexture().repeat.set(beltRibs, 1);
+        }
+
+        // ---- the workpiece: a plate with a hole, and a plug filling what has
+        //      not been drilled yet. When the plug runs out, the hole is through.
+        const WORK_W = 150, WORK_D = 120, WORK_GAP = 0.4;
+        function clearWork() {
+            if (!workGrp) return;
+            scene.remove(workGrp);
+            workGrp.traverse(o => {
+                if (o.geometry) o.geometry.dispose();
+                // Only the stock's own material is ours to throw away. The
+                // clamps borrow the machine's, and disposing those would pull
+                // them out from under the rest of the scene.
+                if (o.material && o.material.userData.own) o.material.dispose();
+            });
+            workGrp = stockGrp = workMesh = plugMesh = null;
+            clampGrps = []; clampNuts = [];
+        }
+        function buildWork() {
+            clearWork();
+            const t = P.thick, r = P.bit / 2;
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0xffffff, map: stockTexture(state.mat),
+                roughness: state.mat === 'wood' ? 0.86 : state.mat === 'alu' ? 0.38 : 0.55,
+                metalness: state.mat === 'wood' ? 0.0 : state.mat === 'alu' ? 0.62 : 0.52 });
+            mat.userData.own = true;
+            const sh = new THREE.Shape();
+            sh.moveTo(-WORK_W / 2, -WORK_D / 2);
+            sh.lineTo(WORK_W / 2, -WORK_D / 2);
+            sh.lineTo(WORK_W / 2, WORK_D / 2);
+            sh.lineTo(-WORK_W / 2, WORK_D / 2);
+            sh.closePath();
+            const hole = new THREE.Path();
+            hole.absarc(0, 0, r, 0, Math.PI * 2, true);
+            sh.holes.push(hole);
+            const geo = new THREE.ExtrudeGeometry(sh, { depth: t, bevelEnabled: false, curveSegments: 30 });
+            geo.rotateX(-Math.PI / 2);          // lay it flat, extruded upwards
+
+            workGrp = new THREE.Group();
+            workGrp.position.set(0, TABLE_TOP + WORK_GAP, 0);
+            // The stock is its own group so it can be lowered onto the table
+            // separately from the clamps that then come down on top of it.
+            stockGrp = new THREE.Group();
+            workGrp.add(stockGrp);
+            workMesh = new THREE.Mesh(geo, mat);
+            workMesh.castShadow = workMesh.receiveShadow = true;
+            stockGrp.add(workMesh);
+            // the material still to be cut, filling the bore from the bottom up
+            plugMesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 30), mat);
+            stockGrp.add(plugMesh);
+            // Two step clamps. Each bar is itself a lever: it rests on a step
+            // block at the outer end, is pulled down by a bolt in the table
+            // slot, and presses on the edge of the work at the inner end.
+            clampGrps = []; clampNuts = [];
+            [-1, 1].forEach(sx => {
+                // the step block is part of the setting-up, and stays put
+                const block = new THREE.Mesh(roundedBox(28, t, 70, 3), MAT.mach);
+                block.position.set(sx * (CLAMP_X + 26), t / 2, 0);
+                block.castShadow = true; workGrp.add(block);
+
+                const cg = new THREE.Group();
+                const bar = new THREE.Mesh(roundedBox(46, 15, 120, 4), MAT.mach);
+                bar.position.set(sx * CLAMP_X, t + 7.5, 0);
+                bar.castShadow = true; cg.add(bar);
+                const bolt = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, t + 38, 12), MAT.dark);
+                bolt.position.set(sx * CLAMP_X, t / 2 + 11, 0); cg.add(bolt);
+                const nut = new THREE.Mesh(new THREE.CylinderGeometry(14, 14, 11, 6), MAT.dark);
+                nut.position.set(sx * CLAMP_X, t + 20.5, 0);
+                nut.castShadow = true; cg.add(nut);
+                workGrp.add(cg);
+                clampGrps.push(cg); clampNuts.push(nut);
+            });
+            scene.add(workGrp);
+            updatePlug();
+            applySetup();
+            applyMesh();
+        }
+
+        // ---- putting a new piece of stock on the table -------------------
+        // Worth showing rather than just swapping the block. It goes the way a
+        // person does it: the plate is brought in from the front of the machine
+        // and set down on the table, and only then do the clamps come down on
+        // it and the nuts get run up tight. That is the order it has to happen
+        // in, and it is the bit students get wrong.
+        const SETUP_T = 1.7;                  // seconds for the whole business
+        const LOAD_Z = 300;                   // how far out in front it starts
+        function applySetup() {
+            if (!workGrp) return;
+            const s = clamp(state.setupT, 0, 1);
+            const slide = ease(clamp(s / 0.52, 0, 1));           // carried in and set down
+            const grip = ease(clamp((s - 0.46) / 0.54, 0, 1));   // the clamps bite
+            // in along z, carried just clear of the table until the last of it
+            stockGrp.position.z = (1 - slide) * LOAD_Z;
+            stockGrp.position.y = (1 - slide) * 26;
+            clampGrps.forEach(g => { g.position.y = (1 - grip) * 78; });
+            clampNuts.forEach(n => { n.rotation.y = (1 - grip) * Math.PI * 4; });
+        }
+        const settingUp = () => state.setupT < 1;
+        function updatePlug() {
+            if (!plugMesh) return;
+            const left = clamp(P.thick - state.depth, 0, P.thick);
+            plugMesh.visible = left > 0.05;
+            if (!plugMesh.visible) return;
+            plugMesh.scale.y = left;
+            plugMesh.position.y = left / 2;     // sits on the bottom face
+        }
+
+        // ---- swarf ---------------------------------------------------------
+        const CHIP_MAX = 90;
+        function spawnChip() {
+            if (!state.chips || chips.length >= CHIP_MAX) return;
+            const c = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.1, 6.5),
+                new THREE.MeshStandardMaterial({ color: M().chip, roughness: 0.5, metalness: 0.4 }));
+            const a = Math.random() * Math.PI * 2;
+            c.position.set(Math.cos(a) * P.bit * 0.5, P.thick + 2, Math.sin(a) * P.bit * 0.5);
+            c.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+            workGrp.add(c);
+            chips.push({ m: c, vx: Math.cos(a) * (40 + Math.random() * 90),
+                         vz: Math.sin(a) * (40 + Math.random() * 90),
+                         vy: 30 + Math.random() * 90, spin: (Math.random() - 0.5) * 14 });
+        }
+        function stepChips(dt) {
+            for (let i = chips.length - 1; i >= 0; i--) {
+                const c = chips[i];
+                c.vy -= 900 * dt;
+                c.m.position.x += c.vx * dt;
+                c.m.position.z += c.vz * dt;
+                c.m.position.y += c.vy * dt;
+                c.m.rotation.y += c.spin * dt;
+                if (c.m.position.y <= 0.6) {    // settles on the plate
+                    c.m.position.y = 0.6; c.vy = 0; c.vx *= 0.7; c.vz *= 0.7; c.spin *= 0.7;
+                }
+                const far = Math.abs(c.m.position.x) > WORK_W / 2 || Math.abs(c.m.position.z) > WORK_D / 2;
+                if (far) {
+                    workGrp.remove(c.m);
+                    c.m.geometry.dispose(); c.m.material.dispose();
+                    chips.splice(i, 1);
+                }
+            }
+        }
+        function clearChips() {
+            chips.forEach(c => {
+                workGrp.remove(c.m);
+                c.m.geometry.dispose(); c.m.material.dispose();
+            });
+            chips = [];
+        }
+
+        // =============================================================
+        //  Drilling
+        // =============================================================
+        const RAPID = 700;                    // mm/min for the free approach
+        const workTop = () => TABLE_TOP + WORK_GAP + P.thick;
+        const tipY = () => REST_TIP - state.plunge;
+        // Far enough that the whole ground point comes out the other side —
+        // a hole is not through until the drill is at full diameter.
+        const maxPlunge = () => REST_TIP - (TABLE_TOP + WORK_GAP - PT_LEN - 4);
+        const inCut = () => tipY() <= workTop() && state.depth < P.thick;
+
+        function step(dt) {
+            if (state.setupT < 1) {
+                if (setupCue === 0) { cue(aPlace); setupCue = 1; }
+                state.setupT = Math.min(1, state.setupT + dt / SETUP_T);
+                // the bolts go on as the clamps start to bite, not before
+                if (setupCue === 1 && state.setupT >= 0.46) { cue(aBolt); setupCue = 2; }
+                applySetup();
+                return;                       // nothing is drilled until it is clamped
+            }
+            // A drill press is switched on and left running; the spindle turns
+            // the whole time and you feed the quill into the work by hand. So
+            // the motor runs from the moment there is power, and the only thing
+            // that stops it is the cut bogging it down.
+            const stalled = state.running && state.phase === 'down' && inCut() && overloaded();
+            state.stalled = stalled;
+            // What the spindle is ACTUALLY doing, as against what the belt is
+            // set for: it winds up when switched on, coasts down when switched
+            // off, and is stopped dead by a cut it cannot turn.
+            const wantRpm = (state.power && !stalled) ? rpm() : 0;
+            const k = stalled ? 26 : (wantRpm > state.spinRpm ? 2.4 : 1.1);
+            state.spinRpm += (wantRpm - state.spinRpm) * Math.min(1, k * dt);
+            // bearing friction: below a crawl it stops, rather than decaying
+            // towards zero for ever
+            if (Math.abs(wantRpm - state.spinRpm) < 8) state.spinRpm = wantRpm;
+            state.spin += 2 * Math.PI * state.spinRpm / 60 * dt;
+            state.beltPhase += state.spinRpm / 60 * dt;
+
+            if (!state.running) return;
+            if (state.spun) {                 // the work tore loose; it is over
+                state.workSpin += 9 * dt;
+                if (state.workSpin > 2.2) { state.running = false; paintRun(); }
+                return;
+            }
+
+            if (state.phase === 'down') {
+                if (stalled) return;          // bogged down, going nowhere
+                // Free air is covered quickly, above the work and below it; in
+                // the cut it is the feed rate that governs, and nothing else.
+                const rate = inCut() ? P.feed : RAPID;
+                state.plunge = Math.min(maxPlunge(), state.plunge + rate / 60 * dt);
+                const wasCut = state.depth;
+                state.depth = clamp(workTop() - tipY(), 0, P.thick);
+                if (state.depth > wasCut) {
+                    state.elapsed += dt;
+                    if (Math.random() < dt * 26) spawnChip();
+                    // the work is twisted just as hard as the drill is
+                    if (willSpin()) { state.spun = true; state.workSpin = 0; }
+                }
+                if (state.plunge >= maxPlunge() - 0.01) { state.phase = 'up'; }
+            } else if (state.phase === 'up') {
+                state.plunge = Math.max(0, state.plunge - RAPID / 60 * dt);
+                if (state.plunge <= 0.01) {
+                    state.plunge = 0; state.phase = 'idle';
+                    state.running = false; state.done = true;
+                    // Job done and the quill back up: switch off. The spindle
+                    // does not stop with it — it coasts down, which is why you
+                    // wait before you go near the chuck.
+                    state.power = false;
+                    paintRun();
+                }
+            }
+        }
+
+        // =============================================================
+        //  Drawing one frame
+        // =============================================================
+        function update3D() {
+            if (!gl) return;
+            quillGrp.position.y = -state.plunge;
+            spindleGrp.rotation.y = state.spin;
+            motorPul.rotation.y = -state.spin * (STEPS[state.step][1] / STEPS[state.step][0]);
+            spinPul.rotation.y = state.spin;
+            // The belt travels at the rim speed of the pulley it is on: one
+            // spindle turn drags pi*d of belt past, and no more.
+            if (beltTex) {
+                const travel = state.spin * STEPS[state.step][1] / 2;      // mm
+                beltTex.offset.x = -travel / beltLength(state.step) * beltRibs;
+            }
+            leverGrp.rotation.x = state.plunge * 0.035;
+
+            // The drill and the jaws move together, so the jaws are always
+            // closed on the shank and never through it. state.shown eases
+            // towards the diameter that has been selected.
+            const r = state.shown / 2;
+            bitMesh.scale.set(r / 4, 1, r / 4);
+            bitMesh.position.y = REST_TIP + 55 + 4.5;
+            const pt = bitMesh.userData.point;
+            pt.scale.set(r / 4, 1, r / 4);
+            pt.position.y = REST_TIP + 4.5;
+            fluteTex.repeat.set(1, Math.max(2, Math.round(110 / Math.max(4, state.shown) / 1.6)));
+            chuckJaws.forEach(j => {
+                const rad = r + JAW_R;        // inner face resting on the shank
+                j.position.set(Math.cos(j.userData.a) * rad, -4, Math.sin(j.userData.a) * rad);
+            });
+
+            guardGrp.visible = state.guard;
+            // green while it turns, red when the cut has stopped it or the
+            // work has torn loose
+            if (lampMesh) {
+                const bad = state.stalled || state.spun;
+                // While the stock is being clamped the machine is stopped —
+                // nobody changes a workpiece with the spindle turning — so the
+                // light goes out with it rather than sitting green over a dead
+                // spindle.
+                if (!state.power || settingUp()) {
+                    MAT.lamp.color.setHex(0x2c3138);
+                    MAT.lamp.emissive.setHex(0x161a1f);
+                    MAT.lamp.emissiveIntensity = 0.25;
+                } else {
+                    MAT.lamp.color.setHex(bad ? 0x8f1c1c : 0x1c8f4a);
+                    MAT.lamp.emissive.setHex(bad ? 0xef4444 : 0x22c55e);
+                    MAT.lamp.emissiveIntensity = bad ? 1.4 : 1.1;
+                }
+            }
+            if (workGrp) {
+                updatePlug();
+                workGrp.rotation.y = state.spun ? state.workSpin : 0;
+            }
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        const VIEWS = {
+            bench: { pos: [1010, 1030, 1250], tgt: [0, 470, -40] },
+            // Everything that matters in one frame: the belt driving it at the
+            // top, the drill in the middle, the work at the bottom. This is the
+            // view for watching cause follow through to effect.
+            all:   { pos: [568, 846, 632],    tgt: [0, 626, -55] },
+            front: { pos: [40, 640, 1330],    tgt: [0, 490, 0] },
+            belt:  { pos: [345, 1035, 55],    tgt: [0, 876, -185] },
+            bit:   { pos: [265, 500, 415],    tgt: [0, 378, 5] }
+        };
+        let camFrom = null, camTo = null, camT = 1;
+        function setView(name) {
+            const v = VIEWS[name];
+            if (!v || !gl) return;
+            camFrom = { pos: camera.position.clone(), tgt: controls.target.clone() };
+            camTo = { pos: new THREE.Vector3().fromArray(v.pos), tgt: new THREE.Vector3().fromArray(v.tgt) };
+            camT = 0;
+        }
+        function advanceCamera(real) {
+            if (!gl) return;
+            if (camT < 1) {
+                camT = Math.min(1, camT + real / 0.8);
+                const e = ease(camT);
+                camera.position.lerpVectors(camFrom.pos, camTo.pos, e);
+                controls.target.lerpVectors(camFrom.tgt, camTo.tgt, e);
+            }
+            controls.autoRotate = state.turntable && camT >= 1;
+        }
+        const ease = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+
+        function applyMesh() {
+            if (!gl) return;
+            const on = state.mesh;
+            scene.traverse(o => {
+                if (!o.isMesh || !o.material) return;
+                const ms = Array.isArray(o.material) ? o.material : [o.material];
+                ms.forEach(m => { if ('wireframe' in m) m.wireframe = on; });
+            });
+        }
+        function applyTheme() {
+            if (!gl) return;
+            const dark = state.viewMode === 'blueprint';
+            scene.background.setHex(dark ? 0x0f172a : 0xf1f5f9);
+            floor3.material.color.setHex(dark ? 0x131c2e : 0xdbe1ea);
+            grid3.material.color.setHex(dark ? 0x1e293b : 0xcbd5e1);
+        }
+        function resizeView() {
+            const r = $('view3d').getBoundingClientRect();
+            const w = Math.max(1, r.width), h = Math.max(1, r.height);
+            if (!gl) return;
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h);
+        }
+        window.addEventListener('resize', resizeView);
+
+        // =============================================================
+        //  Readings
+        // =============================================================
+        function updateStats() {
+            $('stat-rpm').textContent = rpm().toFixed(0);
+            $('stat-vc').textContent = cutSpeed().toFixed(1);
+            $('stat-torque').textContent = cutTorque().toFixed(2);
+            $('stat-power').textContent = cutPower().toFixed(0);
+            const fast = speedRatio() > 1.35, slowc = speedRatio() < 0.5;
+            $('stat-vc').className = (fast || slowc)
+                ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold';
+            $('stat-torque').className = overloaded()
+                ? 'text-rose-600 font-bold' : 'text-violet-600 font-bold';
+            $('stat-power').className = cutPower() > MOTOR_W * DRIVE_EFF
+                ? 'text-rose-600 font-bold' : 'text-amber-600 font-bold';
+            paintAlarm();
+        }
+
+        // Three things can go wrong, and each has a different cause worth
+        // naming: the drive gives up, the clamp gives up, or the edge is
+        // being run at a speed it will not survive.
+        function paintAlarm() {
+            const box = $('alarm');
+            let title = '', body = '', tone = '';
+            if (state.spun) {
+                title = 'The work tore loose.';
+                body = 'The cut twists the plate with ' + cutTorque().toFixed(1)
+                     + ' N·m and the clamps only hold ' + holdTorque().toFixed(1)
+                     + ' N·m. Clamp it harder, or take a lighter cut.';
+                tone = 'bg-rose-50 border-rose-300 text-rose-800';
+            } else if (state.running && state.phase === 'down' && inCut() && overloaded()) {
+                title = 'Stalled.';
+                const s = stepThatCarries();
+                body = 'The cut wants ' + cutTorque().toFixed(1) + ' N·m and the '
+                     + limitedBy() + ' can pass only ' + driveTorque().toFixed(1) + ' N·m. '
+                     + (s >= 0
+                        ? 'Step ' + (s + 1) + ' would carry it.'
+                        : 'No step will carry it — changing gear thickens the chip by just as much as it gains. Ease the feed or use a smaller bit.');
+                tone = 'bg-amber-50 border-amber-300 text-amber-800';
+            } else if (speedRatio() > 1.35) {
+                title = 'Running too fast for ' + M().name + '.';
+                body = 'The edge is doing ' + cutSpeed().toFixed(0) + ' m/min where '
+                     + M().vc + ' is wanted. It will burn. Change down.';
+                tone = 'bg-orange-50 border-orange-300 text-orange-800';
+            }
+            box.classList.toggle('hidden', !title);
+            if (!title) return;
+            box.className = 'absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl '
+                          + 'border shadow-md text-[calc(13px*var(--fs))] text-center max-w-md ' + tone;
+            $('alarm-title').textContent = title;
+            $('alarm-body').textContent = body;
+        }
+
+        // =============================================================
+        //  Sound
+        // =============================================================
+        // The note is tied to the spindle speed rather than left at a fixed
+        // pitch, so moving the belt down a step is something you HEAR before
+        // you read it off the panel — which is the whole point of the machine.
+        // How loud it is follows how hard the cut is working the drive.
+        // Two layers. The motor loop runs the whole time the machine has power,
+        // because that is what a drill press does — it is switched on and left
+        // running. The cutting loop lays over the top of it only while the
+        // drill is actually in the work.
+        const aMotor = $('a-motor'), aWood = $('a-wood'), aMetal = $('a-metal');
+        const aPlace = $('a-place'), aBolt = $('a-bolt');
+        // The two one-shots that go with setting the work up. They fire once
+        // each per change, on the beat of what is happening on screen: the
+        // stock coming down, and then the clamps being run up tight.
+        let setupCue = 2;                       // 0 none yet, 1 placed, 2 bolted
+        function cue(el) {
+            if (!el || !state.sound) return;
+            try { el.currentTime = 0; el.volume = 0.85; el.play().catch(() => {}); } catch (e) {}
+        }
+        const PITCH_REF = 1400;                 // the rpm the clips were cut at
+        let sndOn = false, sndVol = 0, sndNow = null;
+        let motorOn = false, motorVol = 0;
+        [aMotor, aWood, aMetal].forEach(a => {
+            if (!a) return;
+            a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = false;
+        });
+        const sndFor = m => (m === 'wood' ? aWood : aMetal);
+
+        function soundUpdate(real) {
+            // The clips are the sound of cutting, so they belong to the part
+            // of the cycle where the drill is IN the work — not to the rapid
+            // approach above it or the retract after it. Playing them through
+            // the whole run is what made it sound dubbed on.
+            const byT = state.fast ? 1.5 : state.slow ? 0.7 : 1;
+
+            // ---- layer one: the motor, running whenever there is power ----
+            if (aMotor) {
+                // Heard while there is power AND while it is still coasting,
+                // so switching off gives you the run-down rather than a cut.
+                const wantM = state.sound && !settingUp()
+                            && (state.power || state.spinRpm > 25);
+                // stalled, the spindle is stopped and the motor is just leaning
+                // on it: the note drops away and goes rough.
+                const spun = clamp(state.spinRpm / Math.max(1, rpm()), 0, 1);
+                const mTarget = !wantM ? 0 : state.stalled ? 0.30 : 0.07 + 0.17 * spun;
+                const mRate = state.stalled ? clamp(0.45 * byT, 0.4, 2.5)
+                                            : clamp(state.spinRpm / PITCH_REF * byT, 0.34, 2.5);
+                if (wantM && !motorOn) {
+                    motorOn = true; motorVol = 0;
+                    try { aMotor.volume = 0; aMotor.play().catch(() => {}); } catch (e) {}
+                }
+                if (motorOn) {
+                    motorVol += (mTarget - motorVol) * Math.min(1, real * 14);
+                    try {
+                        aMotor.volume = clamp(motorVol, 0, 1);
+                        aMotor.playbackRate = mRate;
+                    } catch (e) {}
+                    if (!wantM && motorVol < 0.02) {
+                        motorOn = false;
+                        try { aMotor.pause(); } catch (e) {}
+                    }
+                }
+            }
+
+            // ---- layer two: the cut, only while the drill is in the work ----
+            const cutting = state.running && state.phase === 'down' && inCut();
+            const want = state.sound && cutting && !state.spun && !settingUp();
+            const el = sndFor(state.mat);
+            if (!el) return;
+            // changing material mid-run swaps clips, so silence the other one
+            if (sndNow && sndNow !== el) { try { sndNow.pause(); } catch (e) {} sndNow = null; sndOn = false; sndVol = 0; }
+
+            let target = 0, rate = 1;
+            if (want) {
+                if (state.stalled) {
+                    // the spindle is not turning: a motor leaning on a load
+                    target = 0.34; rate = clamp(0.42 * byT, 0.4, 2.5);
+                } else {
+                    const load = clamp(cutTorque() / driveTorque(), 0, 1);
+                    target = 0.42 + 0.45 * load;
+                    rate = clamp(rpm() / PITCH_REF * byT, 0.4, 2.5);
+                }
+            }
+            if (want && !sndOn) {
+                sndOn = true; sndNow = el; sndVol = 0;
+                try { el.volume = 0; el.play().catch(() => {}); } catch (e) {}
+            }
+            if (!sndOn) return;
+            sndVol += (target - sndVol) * Math.min(1, real * 26);
+            try {
+                el.volume = clamp(sndVol, 0, 1);
+                el.playbackRate = rate;
+            } catch (e) {}
+            if (!want && sndVol < 0.02) {
+                sndOn = false; sndNow = null;
+                try { el.pause(); } catch (e) {}
+            }
+        }
+        // Only the cutting layer. The motor keeps running: resetting the work
+        // does not switch the machine off.
+        function soundStop() {
+            sndOn = false; sndVol = 0; sndNow = null;
+            [aWood, aMetal].forEach(a => {
+                if (!a) return;
+                try { a.pause(); a.currentTime = 0; a.volume = 0; } catch (e) {}
+            });
+        }
+        function soundAllStop() {
+            soundStop(); motorOn = false; motorVol = 0;
+            [aMotor, aPlace, aBolt].forEach(a => {
+                if (a) { try { a.pause(); a.volume = 0; } catch (e) {} }
+            });
+        }
+
+        // =============================================================
+        //  Loop
+        // =============================================================
+        const DT = 1 / 240;
+        let acc = 0, last = performance.now();
+        function frame(now) {
+            const real = Math.min((now - last) / 1000, 0.05); last = now;
+            const scale = state.fast ? 4 : state.slow ? 0.25 : 1;
+            acc += real * scale;
+            advanceCamera(real);
+            let guard = 0;
+            while (acc >= DT && guard++ < 3000) { step(DT); stepChips(DT); acc -= DT; }
+            // the chuck winds open or shut onto the drill that has been fitted
+            state.shown += (P.bit - state.shown) * Math.min(1, real * 7);
+            if (Math.abs(P.bit - state.shown) < 0.01) state.shown = P.bit;
+            soundUpdate(real);
+            updateStats();
+            update3D();
+            requestAnimationFrame(frame);
+        }
+
+        // =============================================================
+        //  Controls
+        // =============================================================
+        function reset(showSetup) {
+            state.running = false; state.done = false;
+            state.phase = 'idle';
+            state.plunge = 0; state.depth = 0; state.elapsed = 0;
+            state.spun = false; state.workSpin = 0; state.stalled = false;
+            state.power = false;
+            state.setupT = showSetup ? 0 : 1;
+            setupCue = showSetup ? 0 : 2;
+            soundStop();
+            if (gl) { clearChips(); buildWork(); }
+            paintRun();
+        }
+        function bindSlider(id, key, fmt, after) {
+            const el = $(id);
+            el.addEventListener('input', () => {
+                P[key] = parseFloat(el.value);
+                $(id.replace('s-', 'v-')).textContent = fmt(P[key]);
+                if (after) after();
+            });
+        }
+        bindSlider('s-feed', 'feed', v => v.toFixed(0));
+        bindSlider('s-thick', 'thick', v => v.toFixed(0), () => reset());
+        bindSlider('s-clamp', 'clamp', v => v.toFixed(0));
+
+        // The drills in the cabinet, rather than any width you please.
+        function paintBits() {
+            document.querySelectorAll('.bseg').forEach(b => {
+                b.classList.toggle('on', +b.dataset.bit === P.bit);
+                b.title = b.dataset.bit + ' mm drill: wants '
+                    + (M().vc * 1000 / (Math.PI * +b.dataset.bit)).toFixed(0) + ' rpm in ' + M().name;
+            });
+            $('v-bit').textContent = P.bit;
+        }
+        document.querySelectorAll('.bseg').forEach(b => b.addEventListener('click', () => {
+            if (+b.dataset.bit === P.bit) return;
+            P.bit = +b.dataset.bit;
+            paintBits(); reset();
+        }));
+
+        function paintMats() {
+            document.querySelectorAll('.mseg').forEach(b =>
+                b.classList.toggle('on', b.dataset.mat === state.mat));
+        }
+        document.querySelectorAll('.mseg').forEach(b => b.addEventListener('click', () => {
+            if (b.dataset.mat === state.mat) return;
+            state.mat = b.dataset.mat;
+            // A new material means a new piece of stock, so show it being put
+            // on the table and clamped down rather than just appearing.
+            paintMats(); paintBits(); reset(true);
+        }));
+        function paintSteps() {
+            document.querySelectorAll('.sseg').forEach(b => {
+                b.classList.toggle('on', +b.dataset.step === state.step);
+                b.title = 'Step ' + (+b.dataset.step + 1) + ': '
+                    + STEPS[+b.dataset.step][0] + '/' + STEPS[+b.dataset.step][1]
+                    + ' mm pulleys, ' + stepRpm(+b.dataset.step).toFixed(0) + ' rpm';
+            });
+        }
+        document.querySelectorAll('.sseg').forEach(b => b.addEventListener('click', () => {
+            state.step = +b.dataset.step;
+            paintSteps();
+            if (gl) { rebuildBelt(); drawSpec(); }
+        }));
+
+        function paintRun() {
+            const b = $('btn-run');
+            const on = ['bg-slate-900', 'text-white', 'border-slate-900'];
+            const off = ['bg-white', 'text-slate-900', 'border-slate-200', 'hover:bg-slate-50'];
+            on.forEach(c => b.classList.toggle(c, !state.running));
+            off.forEach(c => b.classList.toggle(c, state.running));
+            $('run-label').textContent = state.spun ? 'It Snatched'
+                : state.running ? 'Stop'
+                : state.done ? 'Drill Again' : 'Drill';
+        }
+        $('btn-run').addEventListener('click', () => {
+            if (state.running) { state.running = false; state.phase = 'idle'; state.power = false; }
+            else {
+                if (state.done || state.spun || state.depth >= P.thick) reset();
+                if (settingUp()) { state.setupT = 1; applySetup(); }
+                state.shown = P.bit;          // no half-changed drill mid-cut
+                // Starting the drill switches the machine on, and it stays on
+                // afterwards the way a real one is left running. This is also
+                // the click a browser needs before it will let any sound play,
+                // so the motor can only start here and nowhere earlier.
+                state.power = true;
+                state.running = true; state.done = false; state.phase = 'down';
+            }
+            paintRun();
+        });
+        $('btn-reset').addEventListener('click', () => {
+            Object.assign(P, DEFAULTS);
+            ['feed', 'thick', 'clamp'].forEach(k => {
+                $('s-' + k).value = DEFAULTS[k];
+                $('v-' + k).textContent = DEFAULTS[k];
+            });
+            paintBits();
+            reset(true);
+        });
+
+        function paintChip(chip, on) {
+            ['bg-white', 'hover:bg-slate-50', 'text-slate-900', 'border-slate-200']
+                .forEach(c => chip.classList.toggle(c, on));
+            ['bg-slate-100', 'hover:bg-slate-200', 'text-slate-400', 'border-slate-200']
+                .forEach(c => chip.classList.toggle(c, !on));
+        }
+        function bindChip(chk, chip, key, after) {
+            $(chk).addEventListener('change', e => {
+                state[key] = e.target.checked;
+                paintChip($(chip), e.target.checked);
+                if (after) after(e.target.checked);
+            });
+        }
+        // Go through the checkbox rather than round it, so setting a toggle in
+        // code does exactly what clicking it does — side effects included.
+        function setChip(key, on) {
+            const el = $('chk-' + key);
+            if (el.checked === on) return;
+            el.checked = on;
+            el.dispatchEvent(new Event('change'));
+        }
+        bindChip('chk-fast', 'chip-fast', 'fast', on => { if (on) setChip('slow', false); });
+        bindChip('chk-slow', 'chip-slow', 'slow', on => { if (on) setChip('fast', false); });
+        bindChip('chk-chips', 'chip-chips', 'chips', on => { if (!on) clearChips(); });
+        bindChip('chk-guard', 'chip-guard', 'guard');
+        bindChip('chk-sound', 'chip-sound', 'sound', on => { if (!on) soundAllStop(); });
+        bindChip('chk-mesh', 'chip-mesh', 'mesh', () => applyMesh());
+        bindChip('chk-spin', 'chip-spin', 'turntable');
+
+        function paintViews(name) {
+            document.querySelectorAll('.vseg').forEach(b =>
+                b.classList.toggle('on', b.dataset.view === name));
+        }
+        document.querySelectorAll('.vseg').forEach(b => b.addEventListener('click', () => {
+            setView(b.dataset.view); paintViews(b.dataset.view);
+        }));
+        function paintViewMode() {
+            const dark = state.viewMode === 'blueprint';
+            $('chk-view-mode').checked = dark;
+            $('txt-view-mode').textContent = dark ? 'Light' : 'Dark';
+            paintChip($('chip-view-mode'), dark);
+            applyTheme();
+        }
+        $('chk-view-mode').addEventListener('change', e => {
+            state.viewMode = e.target.checked ? 'blueprint' : 'light';
+            paintViewMode();
+        });
+
+        const infoModal = $('info-modal');
+        $('btn-info').addEventListener('click', () => infoModal.classList.remove('hidden'));
+        $('info-close').addEventListener('click', () => infoModal.classList.add('hidden'));
+        $('info-backdrop').addEventListener('click', () => infoModal.classList.add('hidden'));
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && !infoModal.classList.contains('hidden'))
+                infoModal.classList.add('hidden');
+        });
+
+        function hideLoader() {
+            const el = document.getElementById('loader');
+            if (el) el.classList.add('gone');
+        }
+        setTimeout(hideLoader, 8000);
+
+        window.onload = function () {
+            try {
+                init3D();
+                gl = true;
+                controls.addEventListener('start', () => paintViews(null));
+            } catch (e) {
+                console.warn('3D unavailable:', e);
+                const n = $('nogl');
+                n.classList.remove('hidden'); n.classList.add('flex');
+            }
+            reset();
+            paintBits(); paintMats(); paintSteps(); paintRun(); paintViewMode();
+            applyMesh();
+            resizeView();
+            requestAnimationFrame(hideLoader);
+            setTimeout(hideLoader, 400);
+            requestAnimationFrame(frame);
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Interactive Differential Gear Simulator</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Three.js OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <style>
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(51, 65, 85, 0.8);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(71, 85, 105, 1);
+        }
+
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.82);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .glass-button {
+            background: rgba(30, 41, 59, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            transition: all 0.2s ease-in-out;
+        }
+        .glass-button:hover {
+            background: rgba(51, 65, 85, 0.95);
+            border-color: rgba(56, 189, 248, 0.5);
+            transform: translateY(-1px);
+        }
+        .glass-button:active {
+            transform: translateY(0);
+        }
+
+        @keyframes pulse-red {
+            0%, 100% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.4); }
+            50% { box-shadow: 0 0 22px rgba(239, 68, 68, 0.8); }
+        }
+        .locked-glow {
+            animation: pulse-red 2s infinite;
+        }
+    </style>
+</head>
+<body class="h-full w-full overflow-hidden select-none font-sans bg-slate-950 text-slate-100 flex flex-col">
+
+    <!-- WebGL Canvas Container -->
+    <div id="canvas-container" class="absolute inset-0 w-full h-full z-0"></div>
+
+    <!-- Header Overlay -->
+    <header class="relative z-10 w-full p-4 flex flex-wrap items-center justify-between gap-4 pointer-events-none">
+        <div class="glass-panel rounded-2xl px-5 py-3 flex items-center gap-3 pointer-events-auto shadow-2xl">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 via-orange-500 to-blue-600 flex items-center justify-center text-white text-xl shadow-lg">
+                <i class="fa-solid fa-gears"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-wide bg-gradient-to-r from-amber-200 via-yellow-300 to-sky-300 bg-clip-text text-transparent">
+                    Differential Gear Kinematics Simulator
+                </h1>
+                <p class="text-xs text-slate-400">Mechanical Automotive Powertrain & Crown Wheel Renderer</p>
+            </div>
+        </div>
+
+        <!-- Preset Quick Controls -->
+        <div class="glass-panel rounded-2xl p-2 flex items-center gap-2 pointer-events-auto flex-wrap shadow-2xl">
+            <button id="cam-exact-cad" class="glass-button px-3 py-1.5 rounded-xl text-xs font-bold text-amber-300 flex items-center gap-2 border-amber-500/40">
+                <i class="fa-solid fa-camera text-amber-400"></i> Match CAD View
+            </button>
+            <button id="preset-straight" class="glass-button px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-200 flex items-center gap-2">
+                <i class="fa-solid fa-arrow-up text-emerald-400"></i> Straight
+            </button>
+            <button id="preset-turn-left" class="glass-button px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-200 flex items-center gap-2">
+                <i class="fa-solid fa-arrow-rotate-left text-sky-400"></i> Left Corner
+            </button>
+            <button id="preset-turn-right" class="glass-button px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-200 flex items-center gap-2">
+                <i class="fa-solid fa-arrow-rotate-right text-sky-400"></i> Right Corner
+            </button>
+            <button id="preset-slip" class="glass-button px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-200 flex items-center gap-2">
+                <i class="fa-solid fa-icicles text-cyan-300"></i> Ice Slip
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Dynamic Workspace Overlay -->
+    <div class="relative z-10 flex-1 w-full p-4 flex justify-between pointer-events-none overflow-hidden">
+        
+        <!-- Left Sidebar: Mechanics Controls -->
+        <aside class="w-80 max-h-full glass-panel rounded-2xl p-4 flex flex-col gap-4 overflow-y-auto pointer-events-auto shadow-2xl text-xs">
+            <div class="flex items-center justify-between border-b border-slate-700/60 pb-2">
+                <span class="font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-amber-400"></i> Powertrain Controls
+                </span>
+                <button id="btn-reset-controls" class="text-slate-400 hover:text-slate-200 text-xs" title="Reset Inputs">
+                    <i class="fa-solid fa-rotate-left"></i>
+                </button>
+            </div>
+
+            <!-- Electric Motor Speed Slider -->
+            <div class="space-y-1">
+                <div class="flex justify-between items-center text-slate-300">
+                    <span>Propeller Shaft Speed (RPM)</span>
+                    <span id="val-throttle" class="font-mono text-amber-400 font-bold">100 RPM</span>
+                </div>
+                <input type="range" id="slider-throttle" min="-200" max="200" value="100" step="5"
+                       class="w-full accent-amber-500 bg-slate-800 rounded-lg h-2 cursor-pointer">
+                <div class="flex justify-between text-[10px] text-slate-500">
+                    <span>Reverse (-200)</span>
+                    <span>Neutral (0)</span>
+                    <span>Forward (+200)</span>
+                </div>
+            </div>
+
+            <!-- Steering / Cornering Slider -->
+            <div class="space-y-1">
+                <div class="flex justify-between items-center text-slate-300">
+                    <span>Vehicle Steering Angle</span>
+                    <span id="val-steering" class="font-mono text-sky-400 font-bold">0° (Straight)</span>
+                </div>
+                <input type="range" id="slider-steering" min="-100" max="100" value="0" step="2"
+                       class="w-full accent-sky-500 bg-slate-800 rounded-lg h-2 cursor-pointer">
+                <div class="flex justify-between text-[10px] text-slate-500">
+                    <span>Full Left</span>
+                    <span>Center</span>
+                    <span>Full Right</span>
+                </div>
+            </div>
+
+            <!-- Wheel Resistance & Interactive Brakes -->
+            <div class="space-y-2 border-t border-slate-800 pt-3">
+                <span class="font-semibold text-slate-300 block">Wheel Load & Resistance</span>
+                <div class="grid grid-cols-2 gap-2">
+                    <button id="btn-hold-left" class="glass-button p-2 rounded-xl text-center text-sky-300 flex flex-col items-center gap-1 active:bg-sky-900/50">
+                        <i class="fa-solid fa-hand text-sm"></i>
+                        <span>Hold Inner Half Shaft Wheel</span>
+                    </button>
+                    <button id="btn-hold-right" class="glass-button p-2 rounded-xl text-center text-sky-300 flex flex-col items-center gap-1 active:bg-sky-900/50">
+                        <i class="fa-solid fa-hand text-sm"></i>
+                        <span>Hold Outer Half Shaft Wheel</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Differential Lock Toggle -->
+            <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-800 flex items-center justify-between" id="container-diff-lock">
+                <div>
+                    <div class="font-bold text-slate-200 flex items-center gap-2">
+                        <i class="fa-solid fa-lock text-rose-400"></i> Differential Lock
+                    </div>
+                    <div class="text-[10px] text-slate-400">Forces both wheels at equal speed</div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="toggle-diff-lock" class="sr-only peer">
+                    <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-600"></div>
+                </label>
+            </div>
+
+            <!-- View Modes & CAD Adjustments -->
+            <div class="space-y-3 border-t border-slate-800 pt-3">
+                <span class="font-semibold text-slate-300 block">Visualization Options</span>
+                
+                <!-- Exploded View Slider -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center text-slate-300">
+                        <span>Exploded View Distance</span>
+                        <span id="val-exploded" class="font-mono text-indigo-400 font-bold">0%</span>
+                    </div>
+                    <input type="range" id="slider-exploded" min="0" max="100" value="0" step="1"
+                           class="w-full accent-indigo-500 bg-slate-800 rounded-lg h-2 cursor-pointer">
+                </div>
+
+                <!-- Studio Lighting Theme Switcher -->
+                <div class="flex items-center justify-between text-slate-300">
+                    <span>Light Studio Background</span>
+                    <input type="checkbox" id="toggle-studio-bg" checked class="w-4 h-4 accent-amber-500 rounded cursor-pointer">
+                </div>
+
+                <!-- Rotation Vectors Toggle -->
+                <div class="flex items-center justify-between text-slate-300">
+                    <span>Show Velocity Vectors</span>
+                    <input type="checkbox" id="toggle-vectors" class="w-4 h-4 accent-amber-500 rounded cursor-pointer">
+                </div>
+            </div>
+
+            <!-- Camera Presets -->
+            <div class="border-t border-slate-800 pt-3 space-y-1">
+                <span class="font-semibold text-slate-300 block">Camera Viewpoint</span>
+                <div class="grid grid-cols-3 gap-1">
+                    <button id="cam-iso" class="glass-button p-1.5 rounded-lg text-[10px] font-medium">3D Iso</button>
+                    <button id="cam-front" class="glass-button p-1.5 rounded-lg text-[10px] font-medium">Front</button>
+                    <button id="cam-top" class="glass-button p-1.5 rounded-lg text-[10px] font-medium">Top</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right Overlay: Telemetry & Color Legend -->
+        <aside class="w-80 max-h-full flex flex-col gap-4 pointer-events-auto text-xs">
+            
+            <!-- Live Telemetry Panel -->
+            <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3 shadow-2xl">
+                <div class="flex items-center justify-between border-b border-slate-700/60 pb-2">
+                    <span class="font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-gauge-high text-sky-400"></i> Powertrain Telemetry
+                    </span>
+                    <span class="flex h-2 w-2 relative">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                </div>
+
+                <!-- Gauges Grid -->
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="bg-slate-900/90 rounded-xl p-2.5 border border-slate-800 flex flex-col">
+                        <span class="text-[10px] text-amber-400 font-semibold">Crown Wheel / Cage</span>
+                        <span id="telemetry-carrier-rpm" class="text-base font-mono font-bold text-amber-400">33.3 RPM</span>
+                    </div>
+                    <div class="bg-slate-900/90 rounded-xl p-2.5 border border-slate-800 flex flex-col">
+                        <span class="text-[10px] font-semibold text-emerald-400">Bevel Gear Spin</span>
+                        <span id="telemetry-spider-rpm" class="text-base font-mono font-bold text-emerald-400">0.0 RPM</span>
+                    </div>
+                    <div class="bg-sky-950/40 rounded-xl p-2.5 border border-sky-900/40 flex flex-col">
+                        <span class="text-[10px] text-sky-300">Inner Shaft Wheel</span>
+                        <span id="telemetry-left-rpm" class="text-base font-mono font-bold text-sky-400">33.3 RPM</span>
+                    </div>
+                    <div class="bg-sky-950/40 rounded-xl p-2.5 border border-sky-900/40 flex flex-col">
+                        <span class="text-[10px] text-sky-300">Outer Shaft Wheel</span>
+                        <span id="telemetry-right-rpm" class="text-base font-mono font-bold text-sky-400">33.3 RPM</span>
+                    </div>
+                </div>
+
+                <!-- Torque & Speed Graph Bars -->
+                <div class="space-y-1.5 pt-1">
+                    <div class="space-y-0.5">
+                        <div class="flex justify-between text-[10px] text-sky-300">
+                            <span>Inner Half Shaft (Left)</span>
+                            <span id="pct-left">50%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                            <div id="bar-left" class="bg-sky-500 h-full transition-all duration-150" style="width: 50%;"></div>
+                        </div>
+                    </div>
+                    <div class="space-y-0.5">
+                        <div class="flex justify-between text-[10px] text-sky-300">
+                            <span>Outer Half Shaft (Right)</span>
+                            <span id="pct-right">50%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                            <div id="bar-right" class="bg-sky-400 h-full transition-all duration-150" style="width: 50%;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Component Legend matching diagram colors -->
+            <div class="glass-panel rounded-2xl p-4 flex-1 flex flex-col gap-2 shadow-2xl overflow-y-auto">
+                <div class="font-bold text-slate-200 border-b border-slate-700/60 pb-1.5 flex items-center justify-between">
+                    <span class="flex items-center gap-2">
+                        <i class="fa-solid fa-palette text-amber-300"></i> Diagram Component Legend
+                    </span>
+                </div>
+                
+                <div class="space-y-2 text-[11px] pt-1">
+                    <div class="flex items-center gap-2 bg-slate-900/50 p-1.5 rounded-lg border border-slate-800">
+                        <span class="w-3.5 h-3.5 rounded-md bg-emerald-600 border border-emerald-400 inline-block shadow-sm"></span>
+                        <span><b>Propeller Shaft & Tail Pinion:</b> Green Drive Input</span>
+                    </div>
+                    <div class="flex items-center gap-2 bg-slate-900/50 p-1.5 rounded-lg border border-slate-800">
+                        <span class="w-3.5 h-3.5 rounded-md bg-yellow-400 border border-amber-300 inline-block shadow-sm"></span>
+                        <span><b>Crown Wheel:</b> Yellow Main Bevel Gear</span>
+                    </div>
+                    <div class="flex items-center gap-2 bg-slate-900/50 p-1.5 rounded-lg border border-slate-800">
+                        <span class="w-3.5 h-3.5 rounded-md bg-red-600 border border-red-400 inline-block shadow-sm"></span>
+                        <span><b>Rotating Cage:</b> Red Differential Housing</span>
+                    </div>
+                    <div class="flex items-center gap-2 bg-slate-900/50 p-1.5 rounded-lg border border-slate-800">
+                        <span class="w-3.5 h-3.5 rounded-md bg-green-500 border border-green-300 inline-block shadow-sm"></span>
+                        <span><b>Bevel Gears:</b> Green Internal Pinions</span>
+                    </div>
+                    <div class="flex items-center gap-2 bg-slate-900/50 p-1.5 rounded-lg border border-slate-800">
+                        <span class="w-3.5 h-3.5 rounded-md bg-sky-400 border border-sky-200 inline-block shadow-sm"></span>
+                        <span><b>Axle Shaft Gears & Half Shafts:</b> Steel Blue</span>
+                    </div>
+                    <div class="flex items-center gap-2 bg-slate-900/50 p-1.5 rounded-lg border border-slate-800">
+                        <span class="w-3.5 h-3.5 rounded-md bg-slate-400 border border-white inline-block shadow-sm"></span>
+                        <span><b>Oversized Wheels & Tires:</b> Large Chevron Rubber Wheels</span>
+                    </div>
+                </div>
+
+                <div id="info-status-text" class="text-slate-300 leading-relaxed text-[11px] bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 mt-2">
+                    Loading mechanical physics state...
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        let scene, camera, renderer, controls;
+        
+        // Object Groups
+        let mainAssemblyGroup, pinionGroup, crownWheelGroup, rotatingCageGroup;
+        let spiderGear1Group, spiderGear2Group;
+        let leftAxleGroup, rightAxleGroup;
+        let vectorArrowsGroup;
+        let studioFloorMesh, gridHelper;
+
+        // Visual Velocity Arrows
+        let arrowPinion, arrowCarrier, arrowLeftAxle, arrowRightAxle;
+
+        // Physics State Variables
+        const state = {
+            inputRPM: 100,
+            steeringAngle: 0,
+            diffLocked: false,
+            explodedVal: 0,
+            showVectors: false,
+            isStudioBg: true,
+            holdLeftWheel: false,
+            holdRightWheel: false,
+            
+            // Gear Ratios
+            ringPinionRatio: 3.0,
+            sideSpiderRatio: 1.0,
+
+            // Calculated Speeds (rad/s)
+            pinionOmega: 0,
+            carrierOmega: 0,
+            leftAxleOmega: 0,
+            rightAxleOmega: 0,
+            spiderSpinOmega: 0,
+
+            // Rotational Angles (radians)
+            pinionAngle: 0,
+            carrierAngle: 0,
+            leftAxleAngle: 0,
+            rightAxleAngle: 0,
+            spiderSpinAngle: 0
+        };
+
+        window.addEventListener('load', () => {
+            initScene();
+            buildDifferentialAssembly();
+            setupEventListeners();
+            
+            // Set camera angle to view diagram setup cleanly
+            setCameraCADView();
+            animate();
+        });
+
+        function initScene() {
+            const container = document.getElementById('canvas-container');
+            
+            scene = new THREE.Scene();
+            
+            scene.background = new THREE.Color(0xdbe0e6);
+            scene.fog = new THREE.FogExp2(0xdbe0e6, 0.012);
+
+            camera = new THREE.PerspectiveCamera(38, container.clientWidth / container.clientHeight, 0.1, 1000);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.15;
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxDistance = 50;
+            controls.minDistance = 3;
+            controls.target.set(0, 0, 0);
+
+            // Studio Lighting Setup
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+
+            const mainLight = new THREE.DirectionalLight(0xffffff, 1.4);
+            mainLight.position.set(15, 22, 18);
+            mainLight.castShadow = true;
+            mainLight.shadow.mapSize.width = 2048;
+            mainLight.shadow.mapSize.height = 2048;
+            mainLight.shadow.bias = -0.0001;
+            scene.add(mainLight);
+
+            const fillLight = new THREE.DirectionalLight(0x93c5fd, 0.6);
+            fillLight.position.set(-18, 12, -12);
+            scene.add(fillLight);
+
+            const rimLight = new THREE.DirectionalLight(0xffedd5, 0.5);
+            rimLight.position.set(0, -10, -15);
+            scene.add(rimLight);
+
+            // Ground Plane
+            const planeGeo = new THREE.PlaneGeometry(120, 120);
+            const planeMat = new THREE.MeshStandardMaterial({
+                color: 0xe2e8f0,
+                roughness: 0.8,
+                metalness: 0.1
+            });
+            studioFloorMesh = new THREE.Mesh(planeGeo, planeMat);
+            studioFloorMesh.rotation.x = -Math.PI / 2;
+            studioFloorMesh.position.y = -5.0;
+            studioFloorMesh.receiveShadow = true;
+            scene.add(studioFloorMesh);
+
+            gridHelper = new THREE.GridHelper(50, 50, 0x334155, 0x1e293b);
+            gridHelper.position.y = -4.99;
+            gridHelper.visible = false;
+            scene.add(gridHelper);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        let cachedChevronTireTextures = null;
+
+        function getChevronTireTextures() {
+            if (cachedChevronTireTextures) return cachedChevronTireTextures;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#808080';
+            ctx.fillRect(0, 0, 1024, 512);
+
+            ctx.fillStyle = '#000000';
+            const circumferentialGrooves = [130, 210, 302, 382];
+            circumferentialGrooves.forEach(y => {
+                ctx.fillRect(0, y - 5, 1024, 10);
+            });
+
+            ctx.fillRect(0, 252, 1024, 8);
+
+            const numChevrons = 32;
+            const stepX = 1024 / numChevrons;
+
+            for (let i = 0; i < numChevrons; i++) {
+                const x = i * stepX;
+
+                ctx.lineWidth = 9;
+                ctx.strokeStyle = '#050505';
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                ctx.beginPath();
+                ctx.moveTo(x, 130);
+                ctx.lineTo(x + stepX * 0.7, 190);
+                ctx.lineTo(x + stepX * 0.4, 252);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(x, 382);
+                ctx.lineTo(x + stepX * 0.7, 322);
+                ctx.lineTo(x + stepX * 0.4, 252);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(x + stepX * 0.2, 50);
+                ctx.lineTo(x + stepX * 0.6, 130);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(x + stepX * 0.2, 462);
+                ctx.lineTo(x + stepX * 0.6, 382);
+                ctx.stroke();
+
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = '#303030';
+                ctx.beginPath();
+                ctx.moveTo(x + stepX * 0.3, 150);
+                ctx.lineTo(x + stepX * 0.8, 195);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(x + stepX * 0.3, 362);
+                ctx.lineTo(x + stepX * 0.8, 317);
+                ctx.stroke();
+            }
+
+            const bumpMap = new THREE.CanvasTexture(canvas);
+            bumpMap.wrapS = THREE.RepeatWrapping;
+            bumpMap.wrapT = THREE.ClampToEdgeWrapping;
+
+            cachedChevronTireTextures = { bumpMap };
+            return cachedChevronTireTextures;
+        }
+
+        function createRealWheelAssembly() {
+            const wheelGroup = new THREE.Group();
+
+            // Oversized Realistic Wheel & Tire (Outer radius ~4.2, much larger than the ~2.2 radius crown wheel)
+            const tirePoints = [
+                new THREE.Vector2(2.4, -1.20),
+                new THREE.Vector2(2.6, -1.25),
+                new THREE.Vector2(3.3, -1.30),
+                new THREE.Vector2(3.9, -1.00),
+                new THREE.Vector2(4.1, -0.55),
+                new THREE.Vector2(4.2,  0.00),
+                new THREE.Vector2(4.1,  0.55),
+                new THREE.Vector2(3.9,  1.00),
+                new THREE.Vector2(3.3,  1.30),
+                new THREE.Vector2(2.6,  1.25),
+                new THREE.Vector2(2.4,  1.20)
+            ];
+
+            const tireGeo = new THREE.LatheGeometry(tirePoints, 64);
+            const { bumpMap } = getChevronTireTextures();
+
+            const tireMat = new THREE.MeshStandardMaterial({
+                color: 0x1a1e22,
+                roughness: 0.85,
+                metalness: 0.05,
+                bumpMap: bumpMap,
+                bumpScale: 0.16
+            });
+
+            const tireMesh = new THREE.Mesh(tireGeo, tireMat);
+            tireMesh.castShadow = true;
+            tireMesh.receiveShadow = true;
+            wheelGroup.add(tireMesh);
+
+            // Alloy Rim Barrel
+            const rimProfile = [
+                new THREE.Vector2(2.38, -1.20),
+                new THREE.Vector2(2.50, -1.20),
+                new THREE.Vector2(2.42, -1.00),
+                new THREE.Vector2(2.20, -0.70),
+                new THREE.Vector2(1.95, -0.30),
+                new THREE.Vector2(1.95,  0.30),
+                new THREE.Vector2(2.20,  0.70),
+                new THREE.Vector2(2.42,  1.00),
+                new THREE.Vector2(2.50,  1.20),
+                new THREE.Vector2(2.38,  1.20)
+            ];
+
+            const rimBarrelGeo = new THREE.LatheGeometry(rimProfile, 64);
+            const rimMat = new THREE.MeshStandardMaterial({
+                color: 0xd1d5db,
+                metalness: 0.92,
+                roughness: 0.15
+            });
+            const rimBarrelMesh = new THREE.Mesh(rimBarrelGeo, rimMat);
+            rimBarrelMesh.castShadow = true;
+            wheelGroup.add(rimBarrelMesh);
+
+            // 5-Spoke Alloy Wheel Face
+            const spokeMat = new THREE.MeshStandardMaterial({
+                color: 0x9ca3af,
+                metalness: 0.9,
+                roughness: 0.2
+            });
+
+            for (let i = 0; i < 5; i++) {
+                const angle = (i / 5) * Math.PI * 2;
+                const spokeGroup = new THREE.Group();
+                spokeGroup.rotation.y = angle;
+
+                const spokeGeo = new THREE.BoxGeometry(0.38, 0.38, 1.35);
+                const pos = spokeGeo.attributes.position;
+                for (let k = 0; k < pos.count; k++) {
+                    if (pos.getZ(k) > 0) {
+                        pos.setX(k, pos.getX(k) * 0.7);
+                        pos.setY(k, pos.getY(k) * 0.7);
+                    }
+                }
+                spokeGeo.computeVertexNormals();
+
+                const spokeMesh = new THREE.Mesh(spokeGeo, spokeMat);
+                spokeMesh.position.set(0, 0.7, 1.3);
+                spokeMesh.castShadow = true;
+                spokeGroup.add(spokeMesh);
+
+                wheelGroup.add(spokeGroup);
+            }
+
+            // Center Wheel Hub Cap with axle sleeve
+            const hubCapGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.5, 32);
+            const hubCapMat = new THREE.MeshStandardMaterial({ color: 0x374151, metalness: 0.9, roughness: 0.2 });
+            const hubCapMesh = new THREE.Mesh(hubCapGeo, hubCapMat);
+            hubCapMesh.position.y = 0.8;
+            wheelGroup.add(hubCapMesh);
+
+            return wheelGroup;
+        }
+
+        function createBevelGearGeometry(numTeeth, outerRadius, innerRadius, faceWidth, bevelAngle, colorHex) {
+            const group = new THREE.Group();
+
+            const coneGeo = new THREE.CylinderGeometry(outerRadius, outerRadius - Math.tan(bevelAngle) * faceWidth, faceWidth, numTeeth * 2);
+            const gearMat = new THREE.MeshStandardMaterial({
+                color: colorHex,
+                metalness: 0.82,
+                roughness: 0.22
+            });
+
+            for (let i = 0; i < numTeeth; i++) {
+                const angle = (i / numTeeth) * Math.PI * 2;
+                const toothWidth = (2 * Math.PI * outerRadius) / (numTeeth * 2.2);
+                const toothDepth = faceWidth * 0.95;
+                const toothHeight = outerRadius * 0.24;
+
+                const toothGeo = new THREE.BoxGeometry(toothWidth, toothHeight, toothDepth);
+                const posAttr = toothGeo.attributes.position;
+                for (let j = 0; j < posAttr.count; j++) {
+                    if (posAttr.getY(j) > 0) {
+                        posAttr.setX(j, posAttr.getX(j) * 0.6);
+                    }
+                }
+                toothGeo.computeVertexNormals();
+
+                const toothMesh = new THREE.Mesh(toothGeo, gearMat);
+                toothMesh.position.x = Math.cos(angle) * (outerRadius - toothHeight * 0.18);
+                toothMesh.position.z = Math.sin(angle) * (outerRadius - toothHeight * 0.18);
+                toothMesh.rotation.y = -angle;
+                toothMesh.rotation.z = Math.PI / 12;
+                toothMesh.castShadow = true;
+                
+                group.add(toothMesh);
+            }
+
+            const coreMesh = new THREE.Mesh(coneGeo, gearMat);
+            coreMesh.castShadow = true;
+            group.add(coreMesh);
+
+            return { group, gearMat };
+        }
+
+        function createPropellerShaftAndPinion() {
+            const group = new THREE.Group();
+
+            // Green Tail Pinion (Drive Gear)
+            const pinionRes = createBevelGearGeometry(10, 0.75, 0.45, 0.7, Math.PI / 4, 0x16a34a);
+            pinionRes.group.rotation.x = Math.PI / 2;
+            pinionRes.group.position.z = 1.0;
+            group.add(pinionRes.group);
+
+            // Green Propeller Shaft
+            const shaftGeo = new THREE.CylinderGeometry(0.32, 0.32, 4.5, 24);
+            const shaftMat = new THREE.MeshStandardMaterial({ color: 0x15803d, metalness: 0.8, roughness: 0.25 });
+            const shaftMesh = new THREE.Mesh(shaftGeo, shaftMat);
+            shaftMesh.rotation.x = Math.PI / 2;
+            shaftMesh.position.z = 3.25;
+            shaftMesh.castShadow = true;
+            group.add(shaftMesh);
+
+            // Universal Joint Yoke & Flange Coupling
+            const flangeGeo = new THREE.CylinderGeometry(0.55, 0.55, 0.25, 24);
+            const flangeMat = new THREE.MeshStandardMaterial({ color: 0x166534, metalness: 0.85, roughness: 0.2 });
+            const flangeMesh = new THREE.Mesh(flangeGeo, flangeMat);
+            flangeMesh.rotation.x = Math.PI / 2;
+            flangeMesh.position.z = 4.0;
+            flangeMesh.castShadow = true;
+            group.add(flangeMesh);
+
+            const yokeGeo = new THREE.BoxGeometry(0.7, 0.35, 0.8);
+            const yokeMesh = new THREE.Mesh(yokeGeo, shaftMat);
+            yokeMesh.position.z = 4.5;
+            yokeMesh.castShadow = true;
+            group.add(yokeMesh);
+
+            return group;
+        }
+
+        function createRotatingCageMesh() {
+            // Distinctive Red Differential Housing / Cage as in the diagram
+            const cageGroup = new THREE.Group();
+            const cageMat = new THREE.MeshStandardMaterial({
+                color: 0xdc2626, // Vivid Red
+                metalness: 0.7,
+                roughness: 0.3
+            });
+
+            // Base Ring attaching cage to Crown Wheel
+            const ringGeo = new THREE.CylinderGeometry(1.6, 1.6, 0.3, 32);
+            const ringMesh = new THREE.Mesh(ringGeo, cageMat);
+            ringMesh.rotation.z = Math.PI / 2;
+            ringMesh.position.x = 0.2;
+            ringMesh.castShadow = true;
+            cageGroup.add(ringMesh);
+
+            // Tapered Bracket / Rotating Cage Shell around spider gears
+            const cageBodyShape = new THREE.Shape();
+            cageBodyShape.moveTo(0.2, 1.45);
+            cageBodyShape.lineTo(2.2, 0.85);
+            cageBodyShape.lineTo(2.2, -0.85);
+            cageBodyShape.lineTo(0.2, -1.45);
+            cageBodyShape.closePath();
+
+            // Top Arch Leg of the Cage
+            const archTopGeo = new THREE.BoxGeometry(2.0, 0.35, 0.5);
+            const archTopMesh = new THREE.Mesh(archTopGeo, cageMat);
+            archTopMesh.position.set(1.1, 1.3, 0);
+            archTopMesh.rotation.z = -0.25;
+            archTopMesh.castShadow = true;
+            cageGroup.add(archTopMesh);
+
+            // Bottom Arch Leg of the Cage
+            const archBotMesh = new THREE.Mesh(archTopGeo, cageMat);
+            archBotMesh.position.set(1.1, -1.3, 0);
+            archBotMesh.rotation.z = 0.25;
+            archBotMesh.castShadow = true;
+            cageGroup.add(archBotMesh);
+
+            // Outer Shaft Bearing Support Sleeve at cage end
+            const sleeveGeo = new THREE.CylinderGeometry(0.65, 0.65, 0.7, 32);
+            const sleeveMesh = new THREE.Mesh(sleeveGeo, cageMat);
+            sleeveMesh.rotation.z = Math.PI / 2;
+            sleeveMesh.position.x = 2.0;
+            sleeveMesh.castShadow = true;
+            cageGroup.add(sleeveMesh);
+
+            return cageGroup;
+        }
+
+        function buildDifferentialAssembly() {
+            mainAssemblyGroup = new THREE.Group();
+            scene.add(mainAssemblyGroup);
+
+            // 1. PROPELLER SHAFT & TAIL PINION (Green Drive Gear)
+            pinionGroup = createPropellerShaftAndPinion();
+            mainAssemblyGroup.add(pinionGroup);
+
+            // 2. CROWN WHEEL (Yellow Bevel Ring Gear) & ROTATING CAGE (Red Housing)
+            crownWheelGroup = new THREE.Group();
+
+            // Yellow Crown Wheel
+            const ringRes = createBevelGearGeometry(30, 2.2, 1.4, 0.65, Math.PI / 4, 0xf59e0b);
+            ringRes.group.rotation.z = Math.PI / 2;
+            crownWheelGroup.add(ringRes.group);
+
+            // Red Rotating Cage
+            rotatingCageGroup = createRotatingCageMesh();
+            crownWheelGroup.add(rotatingCageGroup);
+
+            // Cross-Pin Pinion Shaft holding Bevel Gears
+            const pinMat = new THREE.MeshStandardMaterial({ color: 0x15803d, metalness: 0.8, roughness: 0.2 });
+            const pinGeo = new THREE.CylinderGeometry(0.2, 0.2, 2.8, 24);
+            const pinMesh = new THREE.Mesh(pinGeo, pinMat);
+            pinMesh.castShadow = true;
+            crownWheelGroup.add(pinMesh);
+
+            mainAssemblyGroup.add(crownWheelGroup);
+
+            // 3. BEVEL GEARS (Green Internal Spider Pinions)
+            spiderGear1Group = new THREE.Group();
+            const spider1Res = createBevelGearGeometry(12, 0.75, 0.4, 0.55, Math.PI / 4, 0x22c55e); // Green
+            spider1Res.group.rotation.x = Math.PI;
+            spiderGear1Group.add(spider1Res.group);
+            spiderGear1Group.position.y = 1.05;
+            crownWheelGroup.add(spiderGear1Group);
+
+            spiderGear2Group = new THREE.Group();
+            const spider2Res = createBevelGearGeometry(12, 0.75, 0.4, 0.55, Math.PI / 4, 0x22c55e); // Green
+            spiderGear2Group.add(spider2Res.group);
+            spiderGear2Group.position.y = -1.05;
+            crownWheelGroup.add(spiderGear2Group);
+
+            // 4. INNER HALF SHAFT & AXLE SHAFT GEAR / SUN GEAR (Steel Light Blue + Oversized Wheel)
+            leftAxleGroup = new THREE.Group();
+            
+            const leftSideRes = createBevelGearGeometry(16, 1.0, 0.5, 0.55, Math.PI / 4, 0x60a5fa); // Steel Blue
+            leftSideRes.group.rotation.z = -Math.PI / 2;
+            leftSideRes.group.position.x = -1.05;
+            leftAxleGroup.add(leftSideRes.group);
+
+            // Steel Blue Inner Half Shaft
+            const leftShaftGeo = new THREE.CylinderGeometry(0.35, 0.35, 8.0, 24);
+            const leftShaftMat = new THREE.MeshStandardMaterial({ color: 0x93c5fd, metalness: 0.85, roughness: 0.2 });
+            const leftShaftMesh = new THREE.Mesh(leftShaftGeo, leftShaftMat);
+            leftShaftMesh.rotation.z = Math.PI / 2;
+            leftShaftMesh.position.x = -4.8;
+            leftShaftMesh.castShadow = true;
+            leftAxleGroup.add(leftShaftMesh);
+
+            // Oversized Left Wheel
+            const leftWheel = createRealWheelAssembly();
+            leftWheel.position.x = -8.8;
+            leftWheel.rotation.z = Math.PI / 2;
+            leftAxleGroup.add(leftWheel);
+
+            mainAssemblyGroup.add(leftAxleGroup);
+
+            // 5. OUTER HALF SHAFT & AXLE SHAFT GEAR / SUN GEAR (Steel Light Blue + Oversized Wheel)
+            rightAxleGroup = new THREE.Group();
+            
+            const rightSideRes = createBevelGearGeometry(16, 1.0, 0.5, 0.55, Math.PI / 4, 0x60a5fa); // Steel Blue
+            rightSideRes.group.rotation.z = Math.PI / 2;
+            rightSideRes.group.position.x = 1.05;
+            rightAxleGroup.add(rightSideRes.group);
+
+            // Steel Blue Outer Half Shaft
+            const rightShaftGeo = new THREE.CylinderGeometry(0.35, 0.35, 8.0, 24);
+            const rightShaftMat = new THREE.MeshStandardMaterial({ color: 0x93c5fd, metalness: 0.85, roughness: 0.2 });
+            const rightShaftMesh = new THREE.Mesh(rightShaftGeo, rightShaftMat);
+            rightShaftMesh.rotation.z = Math.PI / 2;
+            rightShaftMesh.position.x = 4.8;
+            rightShaftMesh.castShadow = true;
+            rightAxleGroup.add(rightShaftMesh);
+
+            // Oversized Right Wheel
+            const rightWheel = createRealWheelAssembly();
+            rightWheel.position.x = 8.8;
+            rightWheel.rotation.z = -Math.PI / 2;
+            rightAxleGroup.add(rightWheel);
+
+            mainAssemblyGroup.add(rightAxleGroup);
+
+            // Velocity Vector Indicator Rings aligned with respective shaft axes
+            vectorArrowsGroup = new THREE.Group();
+            vectorArrowsGroup.visible = state.showVectors;
+
+            // Pinion ring encircles Z-axis propeller shaft (XY plane)
+            arrowPinion = createRotationRing(0.85, 0x16a34a, 'Z');
+            arrowPinion.position.set(0, 0, 3.2);
+            vectorArrowsGroup.add(arrowPinion);
+
+            // Carrier ring aligned with X-axis crown wheel (YZ plane)
+            arrowCarrier = createRotationRing(2.5, 0xf59e0b, 'X');
+            arrowCarrier.position.set(0, 0, 0);
+            vectorArrowsGroup.add(arrowCarrier);
+
+            // Axle shaft rings aligned with X-axis axles (YZ plane)
+            arrowLeftAxle = createRotationRing(1.5, 0x60a5fa, 'X');
+            arrowLeftAxle.position.set(-5.0, 0, 0);
+            vectorArrowsGroup.add(arrowLeftAxle);
+
+            arrowRightAxle = createRotationRing(1.5, 0x60a5fa, 'X');
+            arrowRightAxle.position.set(5.0, 0, 0);
+            vectorArrowsGroup.add(arrowRightAxle);
+
+            mainAssemblyGroup.add(vectorArrowsGroup);
+        }
+
+        function createRotationRing(radius, colorHex, alignAxis = 'Z') {
+            const group = new THREE.Group();
+            const ringGeo = new THREE.TorusGeometry(radius, 0.04, 12, 48);
+            
+            // Align torus normal to X axis if needed (default Torus is perpendicular to Z)
+            if (alignAxis === 'X') {
+                ringGeo.rotateY(Math.PI / 2);
+            }
+
+            const ringMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.85 });
+            const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+            group.add(ringMesh);
+
+            const coneGeo = new THREE.ConeGeometry(0.16, 0.4, 16);
+            const coneMat = new THREE.MeshBasicMaterial({ color: colorHex });
+            const coneMesh = new THREE.Mesh(coneGeo, coneMat);
+
+            if (alignAxis === 'X') {
+                coneMesh.position.set(0, radius, 0);
+                coneMesh.rotation.z = -Math.PI / 2;
+            } else {
+                coneMesh.position.set(0, radius, 0);
+                coneMesh.rotation.z = -Math.PI / 2;
+            }
+            group.add(coneMesh);
+
+            return group;
+        }
+
+        function setupEventListeners() {
+            const sliderThrottle = document.getElementById('slider-throttle');
+            sliderThrottle.addEventListener('input', (e) => {
+                state.inputRPM = parseFloat(e.target.value);
+                document.getElementById('val-throttle').innerText = `${state.inputRPM} RPM`;
+            });
+
+            const sliderSteering = document.getElementById('slider-steering');
+            sliderSteering.addEventListener('input', (e) => {
+                state.steeringAngle = parseFloat(e.target.value);
+                let text = "0° (Straight)";
+                if (state.steeringAngle < 0) text = `${Math.abs(state.steeringAngle)}° Left`;
+                if (state.steeringAngle > 0) text = `${state.steeringAngle}° Right`;
+                document.getElementById('val-steering').innerText = text;
+            });
+
+            const toggleDiffLock = document.getElementById('toggle-diff-lock');
+            const diffLockContainer = document.getElementById('container-diff-lock');
+            toggleDiffLock.addEventListener('change', (e) => {
+                state.diffLocked = e.target.checked;
+                if (state.diffLocked) {
+                    diffLockContainer.classList.add('locked-glow', 'border-rose-500');
+                } else {
+                    diffLockContainer.classList.remove('locked-glow', 'border-rose-500');
+                }
+            });
+
+            const sliderExploded = document.getElementById('slider-exploded');
+            sliderExploded.addEventListener('input', (e) => {
+                state.explodedVal = parseFloat(e.target.value) / 100;
+                document.getElementById('val-exploded').innerText = `${e.target.value}%`;
+            });
+
+            document.getElementById('toggle-studio-bg').addEventListener('change', (e) => {
+                state.isStudioBg = e.target.checked;
+                if (state.isStudioBg) {
+                    scene.background.setHex(0xdbe0e6);
+                    scene.fog.color.setHex(0xdbe0e6);
+                    studioFloorMesh.visible = true;
+                    gridHelper.visible = false;
+                } else {
+                    scene.background.setHex(0x090d16);
+                    scene.fog.color.setHex(0x090d16);
+                    studioFloorMesh.visible = false;
+                    gridHelper.visible = true;
+                }
+            });
+
+            document.getElementById('toggle-vectors').addEventListener('change', (e) => {
+                state.showVectors = e.target.checked;
+                vectorArrowsGroup.visible = state.showVectors;
+            });
+
+            // Wheel Resistance Hold Buttons
+            const btnHoldLeft = document.getElementById('btn-hold-left');
+            const btnHoldRight = document.getElementById('btn-hold-right');
+
+            const setHoldLeft = (val) => {
+                state.holdLeftWheel = val;
+                btnHoldLeft.classList.toggle('bg-sky-600', val);
+                btnHoldLeft.classList.toggle('text-white', val);
+            };
+            const setHoldRight = (val) => {
+                state.holdRightWheel = val;
+                btnHoldRight.classList.toggle('bg-sky-600', val);
+                btnHoldRight.classList.toggle('text-white', val);
+            };
+
+            btnHoldLeft.addEventListener('mousedown', () => setHoldLeft(true));
+            btnHoldLeft.addEventListener('mouseup', () => setHoldLeft(false));
+            btnHoldLeft.addEventListener('mouseleave', () => setHoldLeft(false));
+            btnHoldLeft.addEventListener('touchstart', (e) => { e.preventDefault(); setHoldLeft(true); });
+            btnHoldLeft.addEventListener('touchend', () => setHoldLeft(false));
+
+            btnHoldRight.addEventListener('mousedown', () => setHoldRight(true));
+            btnHoldRight.addEventListener('mouseup', () => setHoldRight(false));
+            btnHoldRight.addEventListener('mouseleave', () => setHoldRight(false));
+            btnHoldRight.addEventListener('touchstart', (e) => { e.preventDefault(); setHoldRight(true); });
+            btnHoldRight.addEventListener('touchend', () => setHoldRight(false));
+
+            // Presets Buttons
+            document.getElementById('preset-straight').addEventListener('click', () => {
+                setSteering(0);
+                toggleDiffLock.checked = false;
+                state.diffLocked = false;
+                diffLockContainer.classList.remove('locked-glow', 'border-rose-500');
+            });
+            document.getElementById('preset-turn-left').addEventListener('click', () => {
+                setSteering(-70);
+                toggleDiffLock.checked = false;
+                state.diffLocked = false;
+                diffLockContainer.classList.remove('locked-glow', 'border-rose-500');
+            });
+            document.getElementById('preset-turn-right').addEventListener('click', () => {
+                setSteering(70);
+                toggleDiffLock.checked = false;
+                state.diffLocked = false;
+                diffLockContainer.classList.remove('locked-glow', 'border-rose-500');
+            });
+            document.getElementById('preset-slip').addEventListener('click', () => {
+                setSteering(0);
+                setHoldLeft(true);
+                setTimeout(() => setHoldLeft(false), 3000);
+            });
+
+            document.getElementById('btn-reset-controls').addEventListener('click', () => {
+                sliderThrottle.value = 100;
+                state.inputRPM = 100;
+                document.getElementById('val-throttle').innerText = '100 RPM';
+                setSteering(0);
+                toggleDiffLock.checked = false;
+                state.diffLocked = false;
+                diffLockContainer.classList.remove('locked-glow', 'border-rose-500');
+                sliderExploded.value = 0;
+                state.explodedVal = 0;
+                document.getElementById('val-exploded').innerText = '0%';
+            });
+
+            // Camera View Buttons
+            document.getElementById('cam-exact-cad').addEventListener('click', setCameraCADView);
+            document.getElementById('cam-iso').addEventListener('click', () => moveCamera(12, 9, 16));
+            document.getElementById('cam-front').addEventListener('click', () => moveCamera(0, 0, 20));
+            document.getElementById('cam-top').addEventListener('click', () => moveCamera(0, 22, 0.1));
+        }
+
+        function setCameraCADView() {
+            moveCamera(-8.5, 6.2, 14.5, 0, 0, 0);
+        }
+
+        function setSteering(angle) {
+            const slider = document.getElementById('slider-steering');
+            slider.value = angle;
+            state.steeringAngle = angle;
+            let text = "0° (Straight)";
+            if (angle < 0) text = `${Math.abs(angle)}° Left`;
+            if (angle > 0) text = `${angle}° Right`;
+            document.getElementById('val-steering').innerText = text;
+        }
+
+        function moveCamera(x, y, z, tx = 0, ty = 0, tz = 0) {
+            const startPos = camera.position.clone();
+            const targetPos = new THREE.Vector3(x, y, z);
+            const startTarget = controls.target.clone();
+            const endTarget = new THREE.Vector3(tx, ty, tz);
+            const duration = 650;
+            const startTime = performance.now();
+
+            function animateCam(now) {
+                const t = Math.min((now - startTime) / duration, 1.0);
+                const easeT = t * (2 - t);
+                camera.position.lerpVectors(startPos, targetPos, easeT);
+                controls.target.lerpVectors(startTarget, endTarget, easeT);
+                controls.update();
+                if (t < 1.0) requestAnimationFrame(animateCam);
+            }
+            requestAnimationFrame(animateCam);
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('canvas-container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        let lastTime = performance.now();
+
+        function updatePhysics(dt) {
+            // Carrier Speed = Input Pinion Speed / Gear Reduction Ratio (3:1)
+            state.pinionOmega = (state.inputRPM * (2 * Math.PI)) / 60; // rad/s
+            state.carrierOmega = state.pinionOmega / state.ringPinionRatio;
+
+            if (state.diffLocked) {
+                state.leftAxleOmega = state.carrierOmega;
+                state.rightAxleOmega = state.carrierOmega;
+                state.spiderSpinOmega = 0;
+            } else if (state.holdLeftWheel) {
+                state.leftAxleOmega = 0;
+                state.rightAxleOmega = 2 * state.carrierOmega;
+                state.spiderSpinOmega = state.carrierOmega * state.sideSpiderRatio;
+            } else if (state.holdRightWheel) {
+                state.rightAxleOmega = 0;
+                state.leftAxleOmega = 2 * state.carrierOmega;
+                state.spiderSpinOmega = -state.carrierOmega * state.sideSpiderRatio;
+            } else {
+                const steerFactor = state.steeringAngle / 100;
+                state.leftAxleOmega = state.carrierOmega * (1 + steerFactor * 0.75);
+                state.rightAxleOmega = state.carrierOmega * (1 - steerFactor * 0.75);
+                state.spiderSpinOmega = (state.leftAxleOmega - state.rightAxleOmega) * 0.5 * state.sideSpiderRatio;
+            }
+
+            // Integrate Rotational Angles
+            state.pinionAngle += state.pinionOmega * dt;
+            state.carrierAngle += state.carrierOmega * dt;
+            state.leftAxleAngle += state.leftAxleOmega * dt;
+            state.rightAxleAngle += state.rightAxleOmega * dt;
+            state.spiderSpinAngle += state.spiderSpinOmega * dt;
+
+            // Apply 3D Rotations
+            pinionGroup.rotation.z = state.pinionAngle;
+            crownWheelGroup.rotation.x = state.carrierAngle;
+
+            spiderGear1Group.rotation.y = state.spiderSpinAngle;
+            spiderGear2Group.rotation.y = -state.spiderSpinAngle;
+
+            leftAxleGroup.rotation.x = state.leftAxleAngle;
+            rightAxleGroup.rotation.x = state.rightAxleAngle;
+
+            // Exploded View Offsets
+            const exp = state.explodedVal * 3.0;
+            leftAxleGroup.position.x = -exp;
+            rightAxleGroup.position.x = exp;
+            pinionGroup.position.z = exp * 1.3;
+            spiderGear1Group.position.y = 1.05 + exp * 0.7;
+            spiderGear2Group.position.y = -(1.05 + exp * 0.7);
+
+            // Synchronize Velocity Indicator Rings with exact rotational axes
+            arrowPinion.rotation.z = state.pinionAngle;
+            arrowPinion.position.z = 3.2 + exp * 1.3; // Track propeller shaft during exploded view
+
+            arrowCarrier.rotation.x = state.carrierAngle;
+            arrowLeftAxle.rotation.x = state.leftAxleAngle;
+            arrowLeftAxle.position.x = -5.0 - exp;
+
+            arrowRightAxle.rotation.x = state.rightAxleAngle;
+            arrowRightAxle.position.x = 5.0 + exp;
+        }
+
+        function updateHUD() {
+            const carrierRPM = (state.carrierOmega * 60) / (2 * Math.PI);
+            const leftRPM = (state.leftAxleOmega * 60) / (2 * Math.PI);
+            const rightRPM = (state.rightAxleOmega * 60) / (2 * Math.PI);
+            const spiderRPM = (state.spiderSpinOmega * 60) / (2 * Math.PI);
+
+            document.getElementById('telemetry-carrier-rpm').innerText = `${carrierRPM.toFixed(1)} RPM`;
+            document.getElementById('telemetry-left-rpm').innerText = `${leftRPM.toFixed(1)} RPM`;
+            document.getElementById('telemetry-right-rpm').innerText = `${rightRPM.toFixed(1)} RPM`;
+            document.getElementById('telemetry-spider-rpm').innerText = `${Math.abs(spiderRPM).toFixed(1)} RPM`;
+
+            const totalSpeed = Math.abs(leftRPM) + Math.abs(rightRPM);
+            let pctL = 50;
+            let pctR = 50;
+            if (totalSpeed > 0.01) {
+                pctL = Math.round((Math.abs(leftRPM) / totalSpeed) * 100);
+                pctR = Math.round((Math.abs(rightRPM) / totalSpeed) * 100);
+            }
+            document.getElementById('pct-left').innerText = `${pctL}%`;
+            document.getElementById('pct-right').innerText = `${pctR}%`;
+            document.getElementById('bar-left').style.width = `${pctL}%`;
+            document.getElementById('bar-right').style.width = `${pctR}%`;
+
+            const infoBox = document.getElementById('info-status-text');
+            if (state.diffLocked) {
+                infoBox.innerHTML = `
+                    <span class="text-rose-400 font-bold"><i class="fa-solid fa-lock"></i> DIFFERENTIAL LOCKED:</span> 
+                    The green bevel gears are locked to the red rotating cage. Both inner and outer half shafts turn at equal speed.
+                `;
+            } else if (Math.abs(spiderRPM) < 0.1) {
+                infoBox.innerHTML = `
+                    <span class="text-emerald-400 font-bold"><i class="fa-solid fa-arrow-right-long"></i> STRAIGHT LINE DRIVE:</span> 
+                    Propeller shaft turns yellow crown wheel & red cage. Green bevel gears <b>do not spin</b> on their pin, driving both steel-blue axle shaft gears equally.
+                `;
+            } else if (state.holdLeftWheel) {
+                infoBox.innerHTML = `
+                    <span class="text-amber-400 font-bold"><i class="fa-solid fa-triangle-exclamation"></i> INNER HALF SHAFT HELD:</span> 
+                    The stationary inner gear forces green bevel gears to revolve inside red cage, doubling speed to outer shaft wheel!
+                `;
+            } else if (state.holdRightWheel) {
+                infoBox.innerHTML = `
+                    <span class="text-amber-400 font-bold"><i class="fa-solid fa-triangle-exclamation"></i> OUTER HALF SHAFT HELD:</span> 
+                    The stationary outer gear forces green bevel gears to revolve inside red cage, doubling speed to inner shaft wheel!
+                `;
+            } else if (state.steeringAngle < 0) {
+                infoBox.innerHTML = `
+                    <span class="text-sky-400 font-bold"><i class="fa-solid fa-arrow-rotate-left"></i> CORNERING LEFT:</span> 
+                    Inner half shaft slows down on shorter turn radius; green bevel gears rotate inside red cage to speed up outer half shaft wheel.
+                `;
+            } else if (state.steeringAngle > 0) {
+                infoBox.innerHTML = `
+                    <span class="text-sky-400 font-bold"><i class="fa-solid fa-arrow-rotate-right"></i> CORNERING RIGHT:</span> 
+                    Outer half shaft slows down on shorter turn radius; green bevel gears rotate inside red cage to speed up inner half shaft wheel.
+                `;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            const dt = Math.min((now - lastTime) / 1000, 0.1);
+            lastTime = now;
+
+            updatePhysics(dt);
+            updateHUD();
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>

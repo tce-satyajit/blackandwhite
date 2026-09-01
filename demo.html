@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulations</title>
+    <style>
+        /* E-ink treatment: no colour anywhere, no glow. E-paper cannot emit light, so
+           there are no soft shadows or gradients - only paper, ink, hairlines, and
+           hard inversion for emphasis. Self-contained: no external fonts or assets. */
+        * { box-sizing: border-box; }
+
+        :root {
+            /* Sampled from E Ink Carta: the panel never reaches pure white, and its
+               black is a dark warm grey rather than #000. Both carry a faint warm cast
+               from the microcapsule layer, which is what stops it looking like an LCD. */
+            --paper:   #e9e6df;   /* the sheet at rest */
+            --panel:   #f4f2ec;   /* a freshly cleared area, still off-white */
+            --ink:     #171613;   /* fully developed black particles */
+            --ink-mid: #55534c;
+            --ink-low: #86847c;
+            --hair:    #cbc7be;   /* the faintest rule the display can hold */
+        }
+
+        body {
+            margin: 0;
+            background: var(--paper);
+            color: var(--ink);
+            font-family: sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Faint paper grain, so the sheet is not a flat digital white */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            opacity: .05;
+            mix-blend-mode: multiply;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>");
+        }
+        header, main, .modal { position: relative; z-index: 1; }
+
+        /* Labels and controls take a plain face, the way e-reader chrome does */
+        .ui { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+
+        header {
+            background: var(--panel);
+            
+            padding: 5px;
+        }
+        header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+        header p { margin: 4px 0 0; font-size: 13px; color: var(--ink-mid); font-style: italic; }
+
+        /* 4 columns need 4x330 + 3x24 = 1392px of track, so the old 1200px
+           cap could only ever fit 3. Widened to let a fourth in on a big
+           screen; auto-fit still drops to 3, 2 or 1 as the window narrows. */
+        main { max-width: 1560px; margin: 0 auto; padding: 26px 24px 40px; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+            gap: 24px;
+        }
+
+        .card {
+            background: var(--panel);
+            
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: none;
+            transition: box-shadow .12s steps(2, end);
+        }
+        /* A hard offset block, not a blur: e-ink has no soft falloff */
+        .card:hover { box-shadow: 5px 5px 0 var(--ink); }
+
+        .shot {
+            display: block;
+            width: 100%;
+            border: 0;
+             /* border-bottom: 1px solid var(--ink-low);  */
+            padding: 10px;
+            background: var(--panel);
+            cursor: pointer;
+            position: relative;
+            line-height: 0;
+            
+        }
+        /* Thumbnails: grey, contrast-boosted, warmed, then dimmed so their whites
+           land on paper level rather than #fff, which e-ink can never display. */
+        .shot img {
+            width: 100%;
+            height: auto;
+            display: block;
+            filter: grayscale(1) contrast(1.12) sepia(.18) brightness(.94);
+            border-radius: 12px;
+        }
+        .shot::after {
+            content: "Open simulation";
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: var(--paper);
+            background: rgba(23, 22, 19, .74);
+            opacity: 0;
+            transition: opacity .12s steps(2, end);
+        }
+        .shot:hover::after, .shot:focus-visible::after { opacity: 1; }
+
+        .body { padding: 10px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+
+        .tag {
+            align-self: flex-start;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: #7b7a77;
+    background: transparent;
+    border: 1px solid #b4b4b4;
+    border-radius: 5px;
+    padding: 3px 8px;
+        }
+        .card h2 { margin: 0; padding: 12px 10px 10px; font-size: 17px;
+                   font-weight: 700; letter-spacing: -.01em; }
+        .body p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-mid); flex: 1; }
+
+        /* Rule between the copy and the controls, like a printed divider */
+        .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            padding-top: 12px;
+            border-top: 1px solid var(--hair);
+        }
+
+        button.act {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            padding: 9px 13px;
+            border-radius: 6px;
+            cursor: pointer;
+            border: 1px solid var(--ink);
+            background: transparent;
+            color: var(--ink);
+            transition: none;      /* e-ink snaps between states, it does not fade */
+        }
+        button.act:hover  { background: var(--ink); color: var(--paper); }
+        button.act.primary { background: var(--ink); color: var(--paper); }
+        button.act.primary:hover { background: transparent; color: var(--ink); }
+        button.act:active { transform: translate(1px, 1px); }
+
+        button.act:focus-visible, .shot:focus-visible {
+            outline: 2px solid var(--ink);
+            outline-offset: 2px;
+        }
+
+        /* ---- Modal ---- */
+        .modal { position: fixed; inset: 0; z-index: 50; display: none; }
+        .modal.open { display: block; }
+        .backdrop { position: absolute; inset: 0; background: rgba(23, 22, 19, .82); }
+        .frame-wrap {
+            position: absolute;
+            inset: 2vh 2vw;
+            background: var(--panel);
+            border: 2px solid var(--ink);
+            border-radius: 18px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: none;
+        }
+        .bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 5px;
+            
+            background: var(--panel);
+            flex: none;
+        }
+        .bar h3 { margin: 0; font-size: 14px; font-weight: 700; }
+        .bar .right { display: flex; gap: 8px; align-items: center; }
+        .icon-btn {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 16px;
+            line-height: 1;
+            width: 90px;
+            height: 30px;
+            border-radius: 12px;
+            border: 1.5px solid var(--ink);
+            background: transparent;
+            color: var(--ink);
+            cursor: pointer;
+        }
+        .icon-btn:hover { background: var(--ink); color: var(--paper); }
+        iframe { flex: 1; width: 100%; border: 0; display: block; background: var(--panel); }
+
+        @media (max-width: 640px) {
+            .frame-wrap { inset: 0; border: 0; border-radius: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>BLACK & WHITE</h1>
+        <p>Interactive Simulations</p>
+    </header>
+
+    <main>
+        <div class="grid">
+
+            <article class="card">
+                    <h2>Walschaerts Valve Gear</h2>
+                <button class="shot" data-src="steamengine/index.html" data-title="Walschaerts Valve Gear Simulator"
+                        aria-label="Open Walschaerts Valve Gear Simulator">
+                    <img src="steamengine/thumb.png" alt="Steam locomotive valve gear simulation">
+                </button>
+                <div class="body">
+                    <p>How a locomotive times steam into a double-acting cylinder. Adjust cut-off and reversing,
+                       watch the piston valve distribute live and exhaust steam, and hear the exhaust beat.</p>
+                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
+                       <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="steamengine/index.html" data-title="Walschaerts Valve Gear Simulator">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="steamengine/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>Rotary to Linear Motion</h2>
+                <button class="shot" data-src="grashof/index.html" data-title="Rotary to Linear Motion"
+                        aria-label="Open Rotary to Linear Motion simulation">
+                    <img src="grashof/thumb.png" alt="Crank-rocker and rack simulation">
+                </button>
+                <div class="body">
+                    <p>A crank-rocker driving a toothed rack. Vary the crank length to cross the Grashof limit
+                       and see continuous rotation give way to a linkage that can no longer turn.</p>
+                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
+                       <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="grashof/index.html" data-title="Rotary to Linear Motion">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="grashof/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>Scotch Yoke Mechanism</h2>
+                <button class="shot" data-src="scotchyoke/index.html" data-title="Scotch Yoke Mechanism"
+                        aria-label="Open Scotch Yoke simulation">
+                    <img src="scotchyoke/thumb.png" alt="Scotch yoke mechanism simulation">
+                </button>
+                <div class="body">
+                    <p>A pin running in a slotted yoke, turning rotation into <em>exact</em> simple harmonic
+                       motion. Watch displacement trace a true cosine while the crank turns steadily.</p>
+                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
+                       <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="scotchyoke/index.html" data-title="Scotch Yoke Mechanism">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="scotchyoke/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>Aircraft Landing Gear</h2>
+                <button class="shot" data-src="landinggear/index.html" data-title="Aircraft Landing Gear"
+                        aria-label="Open Aircraft Landing Gear simulation">
+                    <img src="landinggear/thumb.png" alt="Aircraft landing gear physics simulation">
+                </button>
+                <div class="body">
+                    <p>Land an airliner and watch the strut absorb it. Momentum, impulse and Hooke&rsquo;s law,
+                       with live force and compression graphs showing why a longer impact means a gentler one.</p>
+                    <span class="tag">Grade 9&ndash;10 &middot; Physics</span>
+                    <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="landinggear/index.html" data-title="Aircraft Landing Gear">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="landinggear/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>Car Gearbox</h2>
+                <button class="shot" data-src="cargearbox/index.html" data-title="Car Gearbox"
+                        aria-label="Open Car Gearbox simulation">
+                    <img src="cargearbox/thumb.png" alt="Car gearbox physics simulation">
+                </button>
+                <div class="body">
+                    <p>Start the engine, pick a gear and drive. Watch a small gear turn a big one into
+                       strong slow torque &mdash; and see on the dials why a hill wants first gear and a
+                       motorway wants fifth.</p>
+                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
+                    <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="cargearbox/index.html" data-title="Car Gearbox">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="cargearbox/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>Differential Gear &mdash; 2D</h2>
+                <button class="shot" data-src="differential2d/index.html" data-title="Differential Gear — 2D"
+                        aria-label="Open Differential Gear 2D simulation">
+                    <img src="differential2d/thumb.png" alt="Differential gear physics simulation">
+                </button>
+                <div class="body">
+                    <p>Round a bend the outer wheel has further to go. Watch the spider gears spin to let it,
+                       check that the two wheel speeds always average to the carrier &mdash; then put one wheel
+                       on ice and see why the car goes nowhere.</p>
+                    <span class="tag">Grade 8&ndash;11 &middot; Physics</span>
+                    <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="differential2d/index.html" data-title="Differential Gear — 2D">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="differential2d/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>Differential Gear &mdash; 3D</h2>
+                <button class="shot" data-src="differential3d/index.html" data-title="Differential Gear — 3D"
+                        aria-label="Open Differential Gear 3D simulation">
+                    <img src="differential3d/thumb.png" alt="Differential gear 3D model simulation">
+                </button>
+                <div class="body">
+                    <p>The same physics on a real three-dimensional differential you can turn round and
+                       look into. Hold one wheel still and watch the other run at exactly twice the
+                       carrier speed.</p>
+                    <span class="tag">Grade 8&ndash;11 &middot; Physics</span>
+                    <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="differential3d/index.html" data-title="Differential Gear — 3D">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="differential3d/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>Bench Drill</h2>
+                <button class="shot" data-src="benchdrill/index.html" data-title="Bench Drill"
+                        aria-label="Open Bench Drill simulation">
+                    <img src="benchdrill/thumb.png" alt="Bench drill with the belt drive visible through a clear guard">
+                </button>
+                <div class="body">
+                    <p>One motor at one speed, and a belt on five pairs of pulleys to turn it into
+                       five. Move the belt and watch speed and turning effort trade off exactly.
+                       Then try to stall it: on the low steps the belt slips first, on the high ones
+                       the motor gives out &mdash; and changing gear turns out to be no help at all
+                       against the second one.</p>
+                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
+                    <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="benchdrill/index.html" data-title="Bench Drill">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="benchdrill/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>6-Axis Robot Arm</h2>
+                <button class="shot" data-src="6axisarm/index.html" data-title="6-Axis Robot Arm"
+                        aria-label="Open 6-Axis Robot Arm simulation">
+                    <img src="6axisarm/thumb.png" alt="Industrial robot arm lifting a carton onto a moving conveyor">
+                </button>
+                <div class="body">
+                    <p>An industrial arm picking parts off a table and setting them on a moving belt.
+                       Six revolute joints, solved with the cosine rule; watch the shoulder torque climb
+                       as the load goes out to arm's length, and find the acceleration that pulls the
+                       part off the tool.</p>
+                    <span class="tag">Grade 8&ndash;11 &middot; Physics</span>
+                    <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="6axisarm/index.html" data-title="6-Axis Robot Arm">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="6axisarm/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                    <h2>3D Printer</h2>
+                <button class="shot" data-src="3dprinter/index.html" data-title="3D Printer Simulator"
+                        aria-label="Open 3D Printer Simulator">
+                    <img src="3dprinter/thumb.png" alt="3D printer building an object layer by layer">
+                </button>
+                <div class="body">
+                    <p>How a machine builds a solid object by adding one layer at a time. Set the layer height,
+                       speed and temperatures, watch the X, Y and Z axes move as the nozzle traces each slice,
+                       and print the pot in four colours off the four-spool AMS. Slow motion drops it to
+                       real time, to watch a single line actually go down.</p>
+                    <span class="tag">Grade 8&ndash;11 &middot; Physics</span>
+                       <div class="actions">
+                        <button class="act primary" data-open="modal"
+                                data-src="3dprinter/index.html" data-title="3D Printer Simulator">Open in Modal</button>
+                        <button class="act" data-open="window" data-src="3dprinter/index.html">New Window</button>
+                    </div>
+                </div>
+            </article>
+
+        </div>
+    </main>
+
+    <!-- Simulation viewer -->
+    <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="backdrop" data-close></div>
+        <div class="frame-wrap">
+            <iframe id="frame" title="Simulation" allow="autoplay; fullscreen"></iframe>
+            <div class="bar">
+                <h3 id="modal-title"></h3>
+                <div class="right">
+                    <!-- <button class="act" id="pop-out">New Window</button> -->
+                    <!-- <button class="icon-btn" id="modal-close" aria-label="Close" title="Close">&times;</button> -->
+                     <button class="icon-btn" id="modal-close" aria-label="Close" title="Close">Close</button>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+
+    <script>
+        const modal = document.getElementById('modal');
+        const frame = document.getElementById('frame');
+        const modalTitle = document.getElementById('modal-title');
+        let currentSrc = '';
+
+        function openModal(src, title) {
+            currentSrc = src;
+            //modalTitle.textContent = title;
+            frame.src = src;
+            modal.classList.add('open');
+            document.body.style.overflow = 'hidden';
+            document.getElementById('modal-close').focus();
+        }
+
+        function closeModal() {
+            modal.classList.remove('open');
+            // Drop the src so the simulation stops animating and any audio stops with it,
+            // rather than running unseen behind the page.
+            frame.removeAttribute('src');
+            document.body.style.overflow = '';
+        }
+
+        function openWindow(src) {
+            window.open(src, '_blank', 'noopener');
+        }
+
+        // Thumbnails and the per-card buttons all carry their target on data attributes.
+        document.querySelectorAll('.shot').forEach(el => {
+            el.addEventListener('click', () => openModal(el.dataset.src, el.dataset.title));
+        });
+
+        document.querySelectorAll('[data-open]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (btn.dataset.open === 'window') openWindow(btn.dataset.src);
+                else openModal(btn.dataset.src, btn.dataset.title);
+            });
+        });
+
+        // document.getElementById('pop-out').addEventListener('click', () => {
+        //     const src = currentSrc;
+        //     closeModal();
+        //     openWindow(src);
+        // });
+
+        document.getElementById('modal-close').addEventListener('click', closeModal);
+        modal.querySelector('[data-close]').addEventListener('click', closeModal);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal.classList.contains('open')) closeModal();
+        });
+    </script>
+</body>
+</html>

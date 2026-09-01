@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Steam Locomotive Valve Gear Mechanism Simulation</title>
+    <!-- Local vendored assets - runs fully offline, no CDN required -->
+    <script src="vendor/tailwind.js"></script>
+    <link href="vendor/fontawesome.css" rel="stylesheet">
+    <link href="vendor/fonts.css" rel="stylesheet">
+    <style>
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+            color: #0f172a;
+            overflow-x: hidden;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        canvas {
+            touch-action: none;
+        }
+
+        /* Custom light scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #e2e8f0;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+
+        /* Range slider styling for Light Theme */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: #cbd5e1;
+            height: 6px;
+            border-radius: 3px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #0284c7;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(2, 132, 199, 0.3);
+            transition: transform 0.1s ease, background-color 0.2s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            background: #0369a1;
+        }
+
+        .glass-panel {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Popover follows the badge every frame, so no transition on position */
+        #part-popover.dark {
+            background: #1e293b;
+            border-color: #38bdf8;
+        }
+        #part-popover.dark h4 { color: #f1f5f9; }
+        #part-popover.dark p { color: #cbd5e1; }
+        #part-popover.dark button { color: #64748b; }
+
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none bg-slate-100">
+
+    <header class="glass-panel sticky top-0 z-30 px-4  border-b border-slate-200 shrink-0">
+        <div class="w-full flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <!-- <div class="p-2 bg-sky-50 border border-sky-200 rounded-xl text-sky-600 shadow-sm">
+                    <i class="fa-solid fa-train text-lg"></i>
+                </div> -->
+                <div>
+                    <h1 class="font-bold text-base text-slate-800 flex items-center gap-2 leading-tight">
+                        Walschaerts Valve Gear Simulator
+                        
+                    </h1>
+                    <p class="text-[14px] text-slate-500">Mechanical Linkage & Steam Pressure Dynamics</p>
+                </div>
+            </div>
+
+            <!-- Header Quick Stats -->
+            <div class="hidden sm:flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 text-xs text-slate-600 mono">
+                <div>RPM: <span id="stat-rpm" class="text-sky-600 font-bold">30</span></div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div>Cutoff: <span id="stat-cutoff" class="text-emerald-600 font-bold">75% FWD</span></div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div>Direction: <span id="stat-dir" class="text-amber-600 font-bold">Forward</span></div>
+            </div>
+        </div>
+    </header>
+
+    <main class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+        
+        <!-- Simulation viewport card -->
+        <div class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+            
+            <!-- Canvas Overlay UI Badge -->
+            <div class="absolute top-3 left-3 z-10 flex gap-2 sm:hidden">
+                <div class="bg-white/95 backdrop-blur border border-slate-200 shadow-sm rounded-lg px-2.5 py-1 text-[11px] text-slate-700 mono flex items-center gap-2">
+                    <div>RPM: <span id="stat-rpm-mobile" class="text-sky-600 font-bold">30</span></div>
+                    <div>Cutoff: <span id="stat-cutoff-mobile" class="text-emerald-600 font-bold">75%</span></div>
+                </div>
+            </div>
+
+            <!-- Canvas element -->
+            <div class="w-full flex-1 min-h-0 relative bg-slate-50 flex items-center justify-center overflow-hidden">
+                <canvas id="simCanvas" class="w-full h-full block cursor-grab active:cursor-grabbing"></canvas>
+
+                <!-- Detail popover, pinned beside the number badge that was clicked -->
+                <div id="part-popover" class="hidden absolute z-20 w-56 rounded-xl border border-sky-200 bg-white shadow-lg p-2.5">
+                    <button id="popover-close" class="absolute top-1 right-1.5 w-5 h-5 text-slate-400 hover:text-slate-700 text-sm leading-none" title="Close">&times;</button>
+                    <div class="flex items-center gap-1.5 mb-1 pr-4">
+                        <span id="popover-num" class="w-5 h-5 shrink-0 rounded-full bg-sky-100 border border-sky-300 text-sky-700 text-[10px] font-bold flex items-center justify-center font-mono">1</span>
+                        <h4 id="popover-title" class="text-xs font-bold text-slate-800 leading-tight"></h4>
+                    </div>
+                    <p id="popover-desc" class="text-[11px] text-slate-600 leading-snug"></p>
+                </div>
+            </div>
+
+            <div class="p-2.5 bg-slate-50/90 border-t border-slate-200 flex flex-col gap-2">
+                
+                <!-- Playback Controls + Sliders Grid -->
+                <div class="flex flex-col lg:flex-row gap-2">
+
+                    
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 flex-1 min-w-0">
+                        <!-- Control 1: Reversing Rod / Cutoff (Item 8) -->
+                        <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center text-[14px]">
+                                <label for="cutoff-slider" class="font-semibold text-slate-700 flex items-center gap-1.5">
+                                    <span class="w-4 h-4 rounded-full bg-sky-100 text-sky-700 border border-sky-300 text-[9px] flex items-center justify-center font-mono">8</span>
+                                    Reversing
+                                </label>
+                                <span id="val-cutoff" class="mono text-sky-700 font-bold">+75%</span>
+                            </div>
+                            <input id="cutoff-slider" type="range" min="-100" max="100" value="75" class="w-full">
+                            <div class="flex justify-between text-[9px] text-slate-500 mono">
+                                <span>Reverse (-100%)</span>
+                                <span>Neutral (0%)</span>
+                                <span>Forward (+100%)</span>
+                            </div>
+                        </div>
+
+                        <!-- Control 2: Engine Speed / Throttle -->
+                        <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center text-[14px]">
+                                <label for="speed-slider" class="font-semibold text-slate-700 flex items-center gap-1.5">
+                                    <i class="fa-solid fa-gauge-high text-amber-600"></i> Engine Speed
+                                </label>
+                                <span id="val-speed" class="mono text-amber-600 font-bold">30 RPM</span>
+                            </div>
+                            <input id="speed-slider" type="range" min="0" max="120" value="30" class="w-full">
+                            <div class="flex justify-between text-[9px] text-slate-500 mono">
+                                <span>Stop (0)</span>
+                                <span>Normal (30)</span>
+                                <span>High (120 RPM)</span>
+                            </div>
+                        </div>
+
+                        <!-- Control 3: Manual Crank Angle Scrub -->
+                        <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center text-[14px]">
+                                <label for="angle-slider" class="font-semibold text-slate-700 flex items-center gap-1.5">
+                                    <i class="fa-solid fa-arrows-spin text-emerald-600"></i> Crank Angle
+                                </label>
+                                <span id="val-angle" class="mono text-emerald-600 font-bold">0°</span>
+                            </div>
+                            <input id="angle-slider" type="range" min="0" max="360" value="0" class="w-full">
+                            <div class="flex justify-between text-[9px] text-slate-500 mono">
+                                <span>0° (Top)</span>
+                                <span>180° (Bottom)</span>
+                                <span>360°</span>
+                            </div>
+                        </div>
+                </div>
+                
+                <!-- Playback Controls Group -->
+                    <div class="flex items-center justify-center gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <label id="chip-labels" class="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 cursor-pointer">
+                        <input id="chk-labels" type="checkbox" checked class="w-3.5 h-3.5 accent-sky-600 cursor-pointer">
+                        <!-- <i class="fa-solid fa-tags"></i> -->
+                        <span>Labels</span>
+                    </label>
+                    <label id="chip-steam" class="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 cursor-pointer">
+                        <input id="chk-steam" type="checkbox" checked class="w-3.5 h-3.5 accent-sky-600 cursor-pointer">
+                        <!-- <i class="fa-solid fa-wind"></i> -->
+                        <span>Steam Flow</span>
+                    </label>
+                    <label id="chip-view-mode" class="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200 rounded-lg border text-xs font-medium transition flex items-center gap-1.5 cursor-pointer">
+                        <input id="chk-view-mode" type="checkbox" class="w-3.5 h-3.5 accent-sky-600 cursor-pointer">
+                        <!-- <i id="icon-view-mode" class="fa-solid fa-moon"></i> -->
+                        <span id="txt-view-mode">Dark Mode</span>
+                    </label>
+                        <button id="btn-play" class="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200 rounded-lg border text-xs font-medium transition flex items-center gap-1.5">
+                            <i id="play-icon" class="fa-solid fa-play"></i>
+                            <span id="play-text">Start</span>
+                        </button>
+                        <button id="btn-step-prev" class="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200 rounded-lg border text-xs font-medium transition" title="Step Back (10°)">
+                            <i class="fa-solid fa-backward-step"></i>
+                        </button>
+                        <button id="btn-step-next" class="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200 rounded-lg border text-xs font-medium transition" title="Step Forward (10°)">
+                            <i class="fa-solid fa-forward-step"></i>
+                        </button>
+                        <button id="btn-reset" class="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200 rounded-lg border text-xs font-medium transition" title="Reset Simulation">
+                            <i class="fa-solid fa-rotate-left"></i>
+                        </button>
+                    </div>
+            </div>
+        </div>
+    </div>
+
+       
+
+    </main>
+
+  
+    <script>
+        // Physics & Kinematics State variables
+        const state = {
+            running: false,
+            rpm: 30,
+            angle: 0, // crank angle in radians
+            cutoff: 0.75, // -1.0 (Full Reverse) to +1.0 (Full Forward)
+            showLabels: true,
+            showSteam: true,
+            viewMode: 'light', // 'light' or 'blueprint'
+            activePart: null, // 1 to 8 or null
+            hoverPart: null,
+            time: 0
+        };
+
+        // Canvas setup
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Screen-space position of each number badge, refreshed every frame by
+        // drawSimulation. Empty whenever labels are hidden.
+        let badgeHits = [];
+
+        // Geometric parameters of mechanism
+        const geo = {
+            wheelRadius: 85,
+            wheelSpacing: 190,
+            crankRadius: 36,
+            numWheels: 3,
+            
+            mainWheelX: 0,
+            mainWheelY: 0,
+
+            eccRadius: 22,
+            eccAngleOffset: Math.PI / 2, // 90 deg offset
+
+            linkPivotX: 65,
+            linkPivotY: -75,
+            linkRadius: 130,
+            linkHalfArc: 55,
+
+            eccRodLength: 215,
+
+            mainRodLength: 290,
+            crossheadY: 0,
+            crossheadLength: 70,
+
+            valveY: -115,
+            combLeverTopLen: 22,
+            combLeverBotLen: 95,
+            unionLinkLen: 65,
+
+            cylinderX: 375,
+            cylinderWidth: 160,
+            cylinderHeight: 70,
+            pistonWidth: 22,
+
+            valveChestY: -115,
+            valveChestWidth: 160,
+            valveChestHeight: 45,
+            valveSpoolWidth: 26,
+            valveSpoolGap: 44,
+
+            reversePivotX: 45,
+            reversePivotY: -180,
+            reachRodLen: 120
+        };
+
+        // ---- Exhaust steam particle system ----
+        // Puffs live in mechanism coordinates, so they scale with the drawing.
+        const steamParticles = [];
+        const MAX_PUFFS = 140;
+        let emitAccum = 0;         // fractional puffs carried between frames
+        let frameDt = 0;
+
+        function emitExhaust(count, x, y, force) {
+            for (let i = 0; i < count && steamParticles.length < MAX_PUFFS; i++) {
+                steamParticles.push({
+                    x: x + (Math.random() - 0.5) * 20,
+                    y: y + Math.random() * 4,
+                    vx: (Math.random() - 0.5) * 58,
+                    vy: -(28 + Math.random() * 42) * force,
+                    r: 7 + Math.random() * 8,
+                    grow: 22 + Math.random() * 20,
+                    spin: (Math.random() - 0.5) * 20,
+                    life: 0,
+                    ttl: 1.3 + Math.random() * 1.3,
+                    peak: 0.26 + Math.random() * 0.14
+                });
+            }
+        }
+
+        // Puffs rise, expand as they cool, and are dragged to a stop.
+        function updateSteam(dt) {
+            for (let i = steamParticles.length - 1; i >= 0; i--) {
+                const p = steamParticles[i];
+                p.life += dt;
+                if (p.life >= p.ttl) { steamParticles.splice(i, 1); continue; }
+                p.x += (p.vx + Math.sin(p.life * 3 + p.spin) * 8) * dt;
+                p.y += p.vy * dt;
+                p.vy += 26 * dt;                 // buoyancy bleeding off
+                p.vx *= 1 - Math.min(1, 0.8 * dt);
+                p.vy *= 1 - Math.min(1, 0.4 * dt);
+                p.r += p.grow * dt;
+            }
+        }
+
+        // Resize Canvas to fit high DPI displays crisp
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+
+            // Rounded joins/caps for every stroke: rods read as forged ends rather than
+            // sharp mitres. Set here because assigning canvas.width resets the ctx state.
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+
+            drawSimulation();
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        function computeKinematics(theta, cutoff) {
+            const rad = theta;
+
+            // 1. Main Wheel Crank Pin
+            const crankPin = {
+                x: geo.mainWheelX + geo.crankRadius * Math.cos(rad),
+                y: geo.mainWheelY - geo.crankRadius * Math.sin(rad)
+            };
+
+            // 2. Eccentric Crank Pin
+            const eccAngle = rad + geo.eccAngleOffset;
+            const eccPin = {
+                x: crankPin.x + geo.eccRadius * Math.cos(eccAngle),
+                y: crankPin.y - geo.eccRadius * Math.sin(eccAngle)
+            };
+
+            // 3. Crosshead position
+            const dxCrank = crankPin.x - geo.mainWheelX;
+            const dyCrank = crankPin.y - geo.crossheadY;
+            const crossheadX = crankPin.x + Math.sqrt(Math.max(0, geo.mainRodLength * geo.mainRodLength - dyCrank * dyCrank));
+            const crosshead = { x: crossheadX, y: geo.crossheadY };
+
+            // 4. Expansion Link rotation
+            const linkPivot = { x: geo.linkPivotX, y: geo.linkPivotY };
+            const linkFootLen = 45;
+            
+            const dxE = eccPin.x - linkPivot.x;
+            const dyE = eccPin.y - linkPivot.y;
+            const distE = Math.sqrt(dxE * dxE + dyE * dyE);
+            
+            const baseAngle = Math.atan2(dyE, dxE);
+            const cosAlpha = (distE * distE + linkFootLen * linkFootLen - geo.eccRodLength * geo.eccRodLength) / (2 * distE * linkFootLen);
+            const clampedCos = Math.max(-1, Math.min(1, cosAlpha));
+            const linkAngle = baseAngle - Math.acos(clampedCos) - Math.PI / 2;
+
+            const linkFoot = {
+                x: linkPivot.x + linkFootLen * Math.cos(linkAngle + Math.PI / 2),
+                y: linkPivot.y + linkFootLen * Math.sin(linkAngle + Math.PI / 2)
+            };
+
+            // 5. Die Block Position in Expansion Link Slot
+            const dieOffset = cutoff * geo.linkHalfArc;
+            const dieBlock = {
+                x: linkPivot.x + dieOffset * Math.sin(linkAngle),
+                y: linkPivot.y - dieOffset * Math.cos(linkAngle)
+            };
+
+            // 6. Union Link and Combination Lever Lower End
+            const dropArmX = crosshead.x - 20;
+            const dropArmY = crosshead.y + 40;
+            const combLeverBot = {
+                x: dropArmX + geo.unionLinkLen,
+                y: dropArmY
+            };
+
+            // 7. Combination Lever Kinematics
+            const radiusRodLen = 220;
+            const combMidY = geo.valveY + 30;
+
+            const radiusRodEnd = {
+                x: dieBlock.x + Math.sqrt(Math.max(0, radiusRodLen * radiusRodLen - Math.pow(dieBlock.y - combMidY, 2))),
+                y: combMidY
+            };
+
+            const ratio = geo.combLeverTopLen / geo.combLeverBotLen;
+            const valveX = radiusRodEnd.x + (radiusRodEnd.x - combLeverBot.x) * ratio;
+            const valveStem = { x: valveX, y: geo.valveY };
+
+            // 8. Reversing Rod
+            const reachArm = {
+                x: geo.reversePivotX + 50 * Math.cos(-cutoff * 0.4 - 0.2),
+                y: geo.reversePivotY + 50 * Math.sin(-cutoff * 0.4 - 0.2)
+            };
+
+            return {
+                crankPin,
+                eccPin,
+                crosshead,
+                linkPivot,
+                linkAngle,
+                linkFoot,
+                dieBlock,
+                combLeverBot,
+                radiusRodEnd,
+                valveStem,
+                reachArm
+            };
+        }
+
+        // The raw valve-stem abscissa sits well left of the chest, and both its mean and
+        // its amplitude drift with cut-off. Pre-compute mean and half-travel per cut-off
+        // once, so the spools can be mapped onto the chest preserving phase and relative
+        // amplitude instead of being clipped to the chest walls.
+        const VALVE_CAL = (() => {
+            const table = [];
+            for (let i = 0; i <= 40; i++) {
+                const c = -1 + i * 0.05;
+                let lo = Infinity, hi = -Infinity;
+                for (let a = 0; a < 360; a += 3) {
+                    const x = computeKinematics(a * Math.PI / 180, c).valveStem.x;
+                    if (x < lo) lo = x;
+                    if (x > hi) hi = x;
+                }
+                table.push({ mid: (lo + hi) / 2, half: (hi - lo) / 2 });
+            }
+            return table;
+        })();
+
+        function valveCal(cutoff) {
+            const t = Math.max(0, Math.min(40, (cutoff + 1) / 0.05));
+            const i = Math.floor(t), f = t - i;
+            const a = VALVE_CAL[i], b = VALVE_CAL[Math.min(40, i + 1)];
+            return { mid: a.mid + (b.mid - a.mid) * f, half: a.half + (b.half - a.half) * f };
+        }
+
+        function drawSimulation() {
+            const w = canvas.getBoundingClientRect().width;
+            const h = canvas.getBoundingClientRect().height;
+
+            ctx.clearRect(0, 0, w, h);
+
+            ctx.save();
+            // Model bounding box in mechanism coordinates:
+            // X from the rear driver rim (-467) to the extended valve spool rod (+477)
+            // Y from the reversing arm boss / part 8 badge (-214) to the rail (+96)
+            const model = { minX: -472, maxX: 482, minY: -220, maxY: 100 };
+            const pad = 20;
+            const modelWidth = model.maxX - model.minX;
+            const modelHeight = model.maxY - model.minY;
+            const scale = Math.min((w - pad) / modelWidth, (h - pad) / modelHeight);
+
+            const centerX = w * 0.5 - ((model.minX + model.maxX) / 2) * scale;
+            const centerY = h * 0.5 - ((model.minY + model.maxY) / 2) * scale;
+
+            ctx.translate(centerX, centerY);
+            ctx.scale(scale, scale);
+
+            const kin = computeKinematics(state.angle, state.cutoff);
+            const highlightPart = state.activePart || state.hoverPart;
+
+            const isBlueprint = state.viewMode === 'blueprint';
+
+            // Technical line-art palette. Every member is an outline filled with the page
+            // colour, so overlapping linkage reads as separate parts like a printed plate.
+            const theme = isBlueprint ? {
+                line: '#e2e8f0',
+                lineSoft: '#64748b',
+                fill: '#0f172a',
+                fillAlt: '#1e293b',
+                steamDense: 'rgba(14,165,233,0.88)',
+                steamThin: 'rgba(56,189,248,0.30)',
+                steamSpent: 'rgba(76,114,176,0.55)',
+                chestSteam: 'rgba(14,165,233,0.55)',
+                puff: '226,232,240',
+                ink: '#e2e8f0',
+                label: '#94a3b8',
+                leader: '#475569'
+            } : {
+                line: '#1e293b',
+                lineSoft: '#94a3b8',
+                fill: '#ffffff',
+                fillAlt: '#f1f5f9',
+                steamDense: 'rgba(233,120,146,0.95)',
+                steamThin: 'rgba(243,180,195,0.48)',
+                steamSpent: 'rgba(140,166,208,0.45)',
+                chestSteam: 'rgba(225,137,156,0.7)',
+                puff: '163,180,201',
+                ink: '#0f172a',
+                label: '#64748b',
+                leader: '#94a3b8'
+            };
+
+            // Background canvas fill when blueprint mode is enabled.
+            // Covers the whole viewport: screen (0,0) maps to model (-centerX/scale, -centerY/scale).
+            if (isBlueprint) {
+                ctx.save();
+                ctx.fillStyle = theme.fill;
+                ctx.fillRect(-centerX / scale, -centerY / scale, w / scale, h / scale);
+                ctx.restore();
+            }
+
+            // partNum is null for unnumbered scenery; guard it, or a null highlightPart
+            // would match and paint every such piece in the highlight colour.
+            function getPartColor(partNum, defaultColor, highlightColor = '#0284c7') {
+                if (partNum != null && highlightPart === partNum) return highlightColor;
+                return defaultColor;
+            }
+
+            function getPartWidth(partNum, defaultWidth) {
+                if (partNum != null && highlightPart === partNum) return defaultWidth + 1.6;
+                return defaultWidth;
+            }
+
+            // ---- line-art primitives ----
+            const TAU = Math.PI * 2;
+
+            // A rod as an outlined capsule: parallel flanks closed by semicircular ends.
+            // Filled, so it occludes whatever it crosses instead of muddling into it.
+            function rod(x1, y1, x2, y2, width, part) {
+                const a = Math.atan2(y2 - y1, x2 - x1);
+                const r = width / 2;
+                ctx.beginPath();
+                ctx.arc(x1, y1, r, a + Math.PI / 2, a - Math.PI / 2);
+                ctx.arc(x2, y2, r, a - Math.PI / 2, a + Math.PI / 2);
+                ctx.closePath();
+                ctx.fillStyle = theme.fill;
+                ctx.fill();
+                ctx.strokeStyle = getPartColor(part, theme.line);
+                ctx.lineWidth = getPartWidth(part, 1.8);
+                ctx.stroke();
+            }
+
+            // The eye at a rod end, with the pin seated inside it.
+            function boss(x, y, rOut, part) {
+                ctx.fillStyle = theme.fill;
+                ctx.strokeStyle = getPartColor(part, theme.line);
+                ctx.lineWidth = getPartWidth(part, 1.8);
+                ctx.beginPath(); ctx.arc(x, y, rOut, 0, TAU); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(x, y, rOut * 0.4, 0, TAU); ctx.stroke();
+            }
+
+            // Solid steam-flow arrowhead pointing along `angle`.
+            function arrow(x, y, angle, len) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(angle);
+                ctx.fillStyle = theme.ink;
+                ctx.beginPath();
+                ctx.moveTo(len * 0.5, 0);
+                ctx.lineTo(-len * 0.5, -len * 0.4);
+                ctx.lineTo(-len * 0.5, len * 0.4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function outlineRect(x, y, rw, rh, part, fill) {
+                ctx.fillStyle = fill || theme.fill;
+                ctx.strokeStyle = getPartColor(part, theme.line);
+                ctx.lineWidth = getPartWidth(part, 2);
+                ctx.beginPath();
+                ctx.rect(x, y, rw, rh);
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            // --- 0. RAIL & FRAME ---
+            ctx.strokeStyle = theme.lineSoft;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(-445, geo.wheelRadius + 4);
+            ctx.lineTo(470, geo.wheelRadius + 4);
+            ctx.moveTo(-445, geo.wheelRadius + 9);
+            ctx.lineTo(470, geo.wheelRadius + 9);
+            ctx.stroke();
+
+            ctx.fillStyle = theme.fill;
+            ctx.strokeStyle = theme.lineSoft;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.rect(-220, -112, 520, 24);
+            ctx.fill();
+            ctx.stroke();
+
+            // --- 1. STEAM CYLINDER & VALVE CHEST (Part 6 & 7) ---
+            const cylX = geo.cylinderX;
+            const cylY = geo.crossheadY;
+            const cylW = geo.cylinderWidth;
+            const cylH = geo.cylinderHeight;
+
+            const vY = geo.valveChestY;
+            const vH = geo.valveChestHeight;
+
+            const pistonX = kin.crosshead.x + 80;
+            const pistonRelX = Math.max(cylX - cylW/2 + 10, Math.min(cylX + cylW/2 - 10, pistonX));
+
+            // Pure translation: the spool travels exactly as far as the stem driving it, so
+            // the valve rod stays rigid. Only the datum is recentred per cut-off, to absorb
+            // the mean drift of the simplified radius-rod geometry.
+            const cal = valveCal(state.cutoff);
+            const valveOffset = kin.valveStem.x - cal.mid;
+            const valveCenter = cylX + valveOffset;
+
+            // A port opens gradually once the valve has travelled past its lap, so the
+            // hand-over between cylinder ends crossfades rather than snapping.
+            const VALVE_LAP = 5;
+            const VALVE_PORT = 14;
+            const portOpen = (d) => Math.max(0, Math.min(1, (d - VALVE_LAP) / VALVE_PORT));
+            const leftAdmit = portOpen(valveOffset);
+            const rightAdmit = portOpen(-valveOffset);
+
+            // Steam ports bridging chest to cylinder
+            ctx.fillStyle = theme.fillAlt;
+            ctx.strokeStyle = theme.lineSoft;
+            ctx.lineWidth = 1.4;
+            [-1, 1].forEach(side => {
+                const px = cylX + side * cylW/3;
+                ctx.beginPath();
+                ctx.moveTo(px - side * 5, vY + vH/2);
+                ctx.lineTo(px - 9, cylY - cylH/2);
+                ctx.lineTo(px + 9, cylY - cylH/2);
+                ctx.lineTo(px + side * 5, vY + vH/2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            });
+
+            // Cylinder chambers. Live steam is dense against its port and thins out
+            // toward the piston as it expands; the exhaust side is a cool haze.
+            const bore = { l: cylX - cylW/2, r: cylX + cylW/2, t: cylY - cylH/2, b: cylY + cylH/2 };
+            // Each end is a cool haze with the live charge laid over it at the port's
+            // current opening, so pressure fades in and out with the valve.
+            function fillChamber(x0, x1, admit, fromLeft) {
+                if (x1 - x0 <= 0) return;
+                if (!state.showSteam) { ctx.fillStyle = theme.fill; ctx.fillRect(x0, bore.t, x1 - x0, cylH); return; }
+                // Spent steam reads blue and live steam pink, the convention the
+                // reference animation uses, so the two states never get confused.
+                ctx.fillStyle = theme.steamSpent;
+                ctx.fillRect(x0, bore.t, x1 - x0, cylH);
+                if (admit <= 0.005) return;
+                const g = ctx.createLinearGradient(fromLeft ? x0 : x1, 0, fromLeft ? x1 : x0, 0);
+                g.addColorStop(0, theme.steamDense);
+                g.addColorStop(1, theme.steamThin);
+                ctx.save();
+                ctx.globalAlpha = admit;
+                ctx.fillStyle = g;
+                ctx.fillRect(x0, bore.t, x1 - x0, cylH);
+                ctx.restore();
+            }
+
+            fillChamber(bore.l, pistonRelX, leftAdmit, true);
+            fillChamber(pistonRelX, bore.r, rightAdmit, false);
+
+            // Hot gas churning in the pressurised end, clipped to the bore
+            if (state.showSteam) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(bore.l, bore.t, cylW, cylH);
+                ctx.clip();
+                [[bore.l, 1, leftAdmit], [bore.r, -1, rightAdmit]].forEach(([anchor, dirn, admit]) => {
+                    if (admit <= 0.01) return;
+                    for (let i = 0; i < 4; i++) {
+                        const ph = state.time * 1.7 + i * 1.9;
+                        const bx = anchor + dirn * (16 + i * 15 + Math.sin(ph) * 7);
+                        const by = cylY + Math.sin(ph * 1.3 + i) * (cylH * 0.24);
+                        const br = 13 + Math.sin(ph * 0.8) * 4;
+                        const g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+                        g.addColorStop(0, `rgba(${theme.puff},${0.30 * admit})`);
+                        g.addColorStop(1, `rgba(${theme.puff},0)`);
+                        ctx.fillStyle = g;
+                        ctx.beginPath();
+                        ctx.arc(bx, by, br, 0, TAU);
+                        ctx.fill();
+                    }
+                });
+                ctx.restore();
+            }
+
+            // Piston head
+            ctx.fillStyle = theme.ink;
+            ctx.fillRect(pistonRelX - geo.pistonWidth/2, bore.t + 4, geo.pistonWidth, cylH - 8);
+
+            // Cylinder outline over the fills
+            ctx.strokeStyle = getPartColor(7, theme.line);
+            ctx.lineWidth = getPartWidth(7, 2.2);
+            ctx.strokeRect(bore.l, bore.t, cylW, cylH);
+
+            if (state.showSteam) {
+                // Both arrow pairs are always drawn; their weight tracks the port opening,
+                // so reversal reads as one fading out while the other fades in.
+                // Arrows drift back and forth along their own axis, the upper and lower one
+                // in antiphase, so the pair reads as moving gas rather than static glyphs.
+                const flowing = state.running && state.rpm > 0 ? 1 : 0;
+                const arrowPair = (x, ang, admit) => {
+                    if (admit <= 0.01) return;
+                    ctx.save();
+                    ctx.globalAlpha = Math.min(1, admit * 1.3);
+                    const axis = Math.cos(ang);
+                    [[-14, 0], [14, Math.PI]].forEach(([dy, phase]) => {
+                        const drift = Math.sin(state.time * 4.5 + phase) * 6 * admit * flowing;
+                        arrow(x + axis * drift, cylY + dy, ang, 11 + 8 * admit);
+                    });
+                    ctx.restore();
+                };
+                arrowPair(bore.l + 30, 0, leftAdmit);
+                arrowPair(bore.r - 30, Math.PI, rightAdmit);
+            }
+
+            // Valve chest body
+            ctx.fillStyle = state.showSteam ? theme.chestSteam : theme.fill;
+            ctx.fillRect(bore.l, vY - vH/2, cylW, vH);
+
+            // Valve spools (Part 6) ride solid inside the chest
+            ctx.fillStyle = getPartColor(6, theme.ink);
+            ctx.fillRect(valveCenter - geo.valveSpoolGap/2 - geo.valveSpoolWidth, vY - vH/2 + 3, geo.valveSpoolWidth, vH - 6);
+            ctx.fillRect(valveCenter + geo.valveSpoolGap/2, vY - vH/2 + 3, geo.valveSpoolWidth, vH - 6);
+
+            ctx.strokeStyle = getPartColor(6, theme.line);
+            ctx.lineWidth = getPartWidth(6, 2.2);
+            ctx.strokeRect(cylX - cylW/2, vY - vH/2, cylW, vH);
+
+            // Live steam inlet stack, offset from centre to leave the ⑥ badge clear
+            const inletX = cylX + 48;
+            outlineRect(inletX - 17, vY - vH/2 - 28, 34, 28, null, theme.fill);
+            if (state.showSteam) {
+                const bob = Math.sin(state.time * 4.5) * 4 * (state.running && state.rpm > 0 ? 1 : 0);
+                arrow(inletX, vY - vH/2 - 14 + bob, Math.PI / 2, 16);
+            }
+
+            // Exhaust stack, mirrored on the other side of the badge
+            const exhaustX = cylX - 48;
+            const exhaustY = vY - vH/2 - 28;
+            outlineRect(exhaustX - 17, exhaustY, 34, 28, null, theme.fill);
+
+            // The spent end vents whenever a port is open, so emission rate simply follows
+            // the opening. That gives two natural chuffs per revolution with no hard
+            // trigger to jump on.
+            const venting = Math.max(leftAdmit, rightAdmit);
+            if (state.showSteam && state.running && state.rpm > 0) {
+                const force = 0.6 + Math.min(1.4, state.rpm / 60);
+                emitAccum += frameDt * (5 + venting * (16 + state.rpm * 0.9));
+                while (emitAccum >= 1) {
+                    emitExhaust(1, exhaustX, exhaustY, force * (0.65 + venting * 0.7));
+                    emitAccum -= 1;
+                }
+            }
+
+            // Valve spool rod
+            rod(kin.valveStem.x, vY, valveCenter + geo.valveSpoolGap/2 + geo.valveSpoolWidth + 18, vY, 7, 6);
+
+            // --- 2. THREE DRIVER WHEELS & COUPLING RODS ---
+            for (let i = 0; i < geo.numWheels; i++) {
+                const wx = geo.mainWheelX - i * geo.wheelSpacing;
+                const wy = geo.mainWheelY;
+
+                // Tyre and rim as concentric outlines
+                ctx.fillStyle = theme.fill;
+                ctx.strokeStyle = theme.line;
+                ctx.lineWidth = 2.6;
+                ctx.beginPath(); ctx.arc(wx, wy, geo.wheelRadius, 0, TAU); ctx.fill(); ctx.stroke();
+                ctx.lineWidth = 1.4;
+                ctx.beginPath(); ctx.arc(wx, wy, geo.wheelRadius - 9, 0, TAU); ctx.stroke();
+
+                // Counterweight, outlined rather than filled solid
+                const cwCenterAngle = -state.angle + Math.PI;
+                ctx.fillStyle = theme.fillAlt;
+                ctx.strokeStyle = theme.lineSoft;
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(wx, wy, geo.wheelRadius - 11, cwCenterAngle - Math.PI * 0.26, cwCenterAngle + Math.PI * 0.26);
+                ctx.arc(wx, wy, 58, cwCenterAngle + Math.PI * 0, cwCenterAngle - Math.PI * 0, true);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Fine spokes, hub to rim
+                ctx.strokeStyle = theme.lineSoft;
+                ctx.lineWidth = 1.1;
+                const numSpokes = 20;
+                for (let s = 0; s < numSpokes; s++) {
+                    const spAngle = -state.angle + (s * TAU / numSpokes);
+                    const ca = Math.cos(spAngle), sa = Math.sin(spAngle);
+                    ctx.beginPath();
+                    ctx.moveTo(wx + 17 * ca, wy + 17 * sa);
+                    ctx.lineTo(wx + (geo.wheelRadius - 10) * ca, wy + (geo.wheelRadius - 10) * sa);
+                    ctx.stroke();
+                }
+
+                // Hub
+                ctx.fillStyle = theme.fill;
+                ctx.strokeStyle = theme.line;
+                ctx.lineWidth = 1.8;
+                ctx.beginPath(); ctx.arc(wx, wy, 18, 0, TAU); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(wx, wy, 8, 0, TAU); ctx.stroke();
+            }
+
+            // Coupling rod linking all three crank pins
+            const cPin1 = { x: geo.mainWheelX - 2 * geo.wheelSpacing + geo.crankRadius * Math.cos(state.angle), y: geo.mainWheelY - geo.crankRadius * Math.sin(state.angle) };
+            const cPin2 = { x: geo.mainWheelX - 1 * geo.wheelSpacing + geo.crankRadius * Math.cos(state.angle), y: geo.mainWheelY - geo.crankRadius * Math.sin(state.angle) };
+            rod(cPin1.x, cPin1.y, cPin2.x, cPin2.y, 15);
+            rod(cPin2.x, cPin2.y, kin.crankPin.x, kin.crankPin.y, 15);
+            boss(cPin1.x, cPin1.y, 9);
+            boss(cPin2.x, cPin2.y, 9);
+
+            // --- 3. MAIN CONNECTING ROD, PISTON ROD & CROSSHEAD (Part 5) ---
+            ctx.strokeStyle = theme.lineSoft;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(120, kin.crosshead.y - 19); ctx.lineTo(332, kin.crosshead.y - 19);
+            ctx.moveTo(120, kin.crosshead.y + 19); ctx.lineTo(332, kin.crosshead.y + 19);
+            ctx.stroke();
+
+            rod(kin.crankPin.x, kin.crankPin.y, kin.crosshead.x, kin.crosshead.y, 16);
+            boss(kin.crankPin.x, kin.crankPin.y, 10);
+
+            rod(pistonRelX, cylY, kin.crosshead.x, kin.crosshead.y, 8, 5);
+            outlineRect(kin.crosshead.x - 26, kin.crosshead.y - 14, 52, 28, 5);
+            rod(kin.crosshead.x - 6, kin.crosshead.y + 8, kin.crosshead.x - 20, kin.crosshead.y + 40, 9, 5);
+
+            // --- 4. ECCENTRIC CRANK & ECCENTRIC ROD (Part 2) ---
+            rod(kin.crankPin.x, kin.crankPin.y, kin.eccPin.x, kin.eccPin.y, 14, 2);
+            rod(kin.eccPin.x, kin.eccPin.y, kin.linkFoot.x, kin.linkFoot.y, 10, 2);
+            boss(kin.eccPin.x, kin.eccPin.y, 7, 2);
+
+            // --- 5. EXPANSION LINK (Part 1) ---
+            // The curved slot as a band outline, the way it appears on a works drawing.
+            ctx.save();
+            ctx.translate(kin.linkPivot.x, kin.linkPivot.y);
+            ctx.rotate(kin.linkAngle);
+
+            const slotOut = geo.linkHalfArc + 9;
+            const slotIn = geo.linkHalfArc - 9;
+            ctx.beginPath();
+            ctx.arc(0, 0, slotOut, -Math.PI / 2, Math.PI / 2);
+            ctx.arc(0, 0, slotIn, Math.PI / 2, -Math.PI / 2, true);
+            ctx.closePath();
+            ctx.fillStyle = theme.fill;
+            ctx.fill();
+            ctx.strokeStyle = getPartColor(1, theme.line);
+            ctx.lineWidth = getPartWidth(1, 2);
+            ctx.stroke();
+
+            // Slot centreline the die block runs in
+            ctx.strokeStyle = theme.lineSoft;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(0, 0, geo.linkHalfArc, -Math.PI / 2, Math.PI / 2);
+            ctx.stroke();
+
+            ctx.restore();
+
+            rod(kin.linkPivot.x, kin.linkPivot.y, kin.linkFoot.x, kin.linkFoot.y, 9, 1);
+            boss(kin.linkPivot.x, kin.linkPivot.y, 8, 1);
+
+            // --- 6. DIE BLOCK & RADIUS ROD (Part 3) ---
+            rod(kin.dieBlock.x, kin.dieBlock.y, kin.radiusRodEnd.x, kin.radiusRodEnd.y, 9, 3);
+            outlineRect(kin.dieBlock.x - 8, kin.dieBlock.y - 8, 16, 16, 3, theme.fillAlt);
+
+            // --- 7. UNION LINK & COMBINATION LEVER (Part 4) ---
+            rod(kin.crosshead.x - 20, kin.crosshead.y + 40, kin.combLeverBot.x, kin.combLeverBot.y, 9, 4);
+            rod(kin.combLeverBot.x, kin.combLeverBot.y, kin.radiusRodEnd.x, kin.radiusRodEnd.y, 12, 4);
+            rod(kin.radiusRodEnd.x, kin.radiusRodEnd.y, kin.valveStem.x, kin.valveStem.y, 12, 4);
+            boss(kin.combLeverBot.x, kin.combLeverBot.y, 7, 4);
+            boss(kin.radiusRodEnd.x, kin.radiusRodEnd.y, 7, 4);
+
+            // --- 8. REVERSING GEAR & REACH ROD (Part 8) ---
+            rod(geo.reversePivotX, geo.reversePivotY - 5, -350, geo.reversePivotY - 5, 8, 8);
+            rod(geo.reversePivotX, geo.reversePivotY, kin.reachArm.x, kin.reachArm.y, 10, 8);
+            rod(kin.reachArm.x, kin.reachArm.y, kin.dieBlock.x, kin.dieBlock.y, 8, 8);
+            boss(geo.reversePivotX, geo.reversePivotY, 8, 8);
+            boss(kin.reachArm.x, kin.reachArm.y, 6, 8);
+
+            // --- 9. JOINT PINS ---
+            [kin.crosshead, kin.linkFoot, kin.valveStem].forEach(j => {
+                ctx.fillStyle = theme.fill;
+                ctx.strokeStyle = theme.line;
+                ctx.lineWidth = 1.6;
+                ctx.beginPath(); ctx.arc(j.x, j.y, 4.5, 0, TAU); ctx.fill(); ctx.stroke();
+            });
+
+            // --- 9b. EXHAUST PLUME ---
+            // Drawn over the assembly: the steam vents into the air in front of it.
+            if (state.showSteam) {
+                steamParticles.forEach(p => {
+                    const t = p.life / p.ttl;
+                    // quick swell, long fade
+                    const a = Math.min(1, t * 14) * (1 - t) * (1 - t) * p.peak;
+                    if (a <= 0.002) return;
+                    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
+                    g.addColorStop(0, `rgba(${theme.puff},${a})`);
+                    g.addColorStop(0.4, `rgba(${theme.puff},${a * 0.5})`);
+                    g.addColorStop(0.75, `rgba(${theme.puff},${a * 0.15})`);
+                    g.addColorStop(1, `rgba(${theme.puff},0)`);
+                    ctx.fillStyle = g;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, TAU);
+                    ctx.fill();
+                });
+            }
+
+            // --- 10. NUMBER LABELS (1 to 8) OVERLAY ---
+            badgeHits = [];
+            if (state.showLabels) {
+                const labelPositions = [
+                    { num: '1', x: kin.linkPivot.x - 25, y: kin.linkPivot.y - 15 },
+                    { num: '2', x: kin.eccPin.x - 15, y: kin.eccPin.y + 20 },
+                    { num: '3', x: (kin.dieBlock.x + kin.radiusRodEnd.x) / 2, y: (kin.dieBlock.y + kin.radiusRodEnd.y) / 2 - 12 },
+                    { num: '4', x: kin.combLeverBot.x + 18, y: kin.combLeverBot.y - 25 },
+                    { num: '5', x: kin.crosshead.x, y: kin.crosshead.y + 25 },
+                    { num: '6', x: cylX, y: vY - 30 },
+                    { num: '7', x: cylX, y: cylY + cylH/2 + 20 },
+                    { num: '8', x: -200, y: geo.reversePivotY - 20 }
+                ];
+
+                // Cache where each badge landed in screen space so clicks can hit-test
+                // against it and the popover can track it as the linkage moves.
+                badgeHits = labelPositions.map(l => ({
+                    num: l.num,
+                    sx: centerX + l.x * scale,
+                    sy: centerY + l.y * scale,
+                    r: 11 * scale
+                }));
+
+                labelPositions.forEach(lbl => {
+                    const isHovered = highlightPart === parseInt(lbl.num);
+
+                    ctx.save();
+                    ctx.fillStyle = isHovered ? '#0284c7' : (isBlueprint ? '#1e293b' : '#ffffff');
+                    ctx.strokeStyle = isHovered ? '#0f172a' : '#0284c7';
+                    ctx.lineWidth = 1.5;
+
+                    ctx.beginPath();
+                    ctx.arc(lbl.x, lbl.y, 11, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    ctx.fillStyle = isHovered ? '#ffffff' : '#0284c7';
+                    ctx.font = 'bold 14px JetBrains Mono, monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(lbl.num, lbl.x, lbl.y);
+                    ctx.restore();
+                });
+            }
+            ctx.restore();
+        }
+
+        let lastTime = performance.now();
+        function animate(currentTime) {
+            const dt = Math.min(0.05, (currentTime - lastTime) / 1000);
+            lastTime = currentTime;
+            frameDt = dt;
+            state.time += dt;
+            updateSteam(dt);
+
+            if (state.running && state.rpm > 0) {
+                const dir = state.cutoff < 0 ? -1 : 1;
+                const omega = (state.rpm * 2 * Math.PI / 60) * dir;
+                state.angle = (state.angle + omega * dt) % (Math.PI * 2);
+                if (state.angle < 0) state.angle += Math.PI * 2;
+
+                document.getElementById('angle-slider').value = Math.round((state.angle * 180 / Math.PI));
+                document.getElementById('val-angle').textContent = `${Math.round(state.angle * 180 / Math.PI)}°`;
+            }
+
+            drawSimulation();
+            positionPopover();
+            requestAnimationFrame(animate);
+        }
+
+        // Action Buttons Setup
+        const btnPlay = document.getElementById('btn-play');
+        const playIcon = document.getElementById('play-icon');
+        const playText = document.getElementById('play-text');
+
+        btnPlay.addEventListener('click', () => {
+            state.running = !state.running;
+            if (state.running) {
+                playIcon.className = 'fa-solid fa-pause';
+                playText.textContent = 'Stop';
+            } else {
+                playIcon.className = 'fa-solid fa-play';
+                playText.textContent = 'Start';
+            }
+        });
+
+        document.getElementById('btn-step-next').addEventListener('click', () => {
+            state.running = false;
+            playIcon.className = 'fa-solid fa-play';
+            playText.textContent = 'Run';
+            state.angle = (state.angle + (Math.PI / 18)) % (Math.PI * 2);
+            document.getElementById('angle-slider').value = Math.round((state.angle * 180 / Math.PI));
+            document.getElementById('val-angle').textContent = `${Math.round(state.angle * 180 / Math.PI)}°`;
+        });
+
+        document.getElementById('btn-step-prev').addEventListener('click', () => {
+            state.running = false;
+            playIcon.className = 'fa-solid fa-play';
+            playText.textContent = 'Run';
+            state.angle = (state.angle - (Math.PI / 18) + Math.PI * 2) % (Math.PI * 2);
+            document.getElementById('angle-slider').value = Math.round((state.angle * 180 / Math.PI));
+            document.getElementById('val-angle').textContent = `${Math.round(state.angle * 180 / Math.PI)}°`;
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            state.angle = 0;
+            state.cutoff = 0.75;
+            state.rpm = 30;
+            document.getElementById('cutoff-slider').value = 75;
+            document.getElementById('speed-slider').value = 30;
+            document.getElementById('angle-slider').value = 0;
+            updateUIStats();
+        });
+
+        // Sliders input handling
+        const cutoffSlider = document.getElementById('cutoff-slider');
+        cutoffSlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            state.cutoff = val / 100;
+            updateUIStats();
+        });
+
+        const speedSlider = document.getElementById('speed-slider');
+        speedSlider.addEventListener('input', (e) => {
+            state.rpm = parseInt(e.target.value);
+            updateUIStats();
+        });
+
+        const angleSlider = document.getElementById('angle-slider');
+        angleSlider.addEventListener('input', (e) => {
+            const deg = parseInt(e.target.value);
+            state.angle = (deg * Math.PI) / 180;
+            document.getElementById('val-angle').textContent = `${deg}°`;
+        });
+
+        function updateUIStats() {
+            const pct = Math.abs(Math.round(state.cutoff * 100));
+            const dir = state.cutoff > 0 ? 'Forward' : (state.cutoff < 0 ? 'Reverse' : 'Neutral');
+            
+            document.getElementById('val-cutoff').textContent = `${state.cutoff > 0 ? '+' : ''}${Math.round(state.cutoff * 100)}%`;
+            document.getElementById('val-speed').textContent = `${state.rpm} RPM`;
+            
+            const statRpm = document.getElementById('stat-rpm');
+            const statCutoff = document.getElementById('stat-cutoff');
+            const statDir = document.getElementById('stat-dir');
+
+            if (statRpm) statRpm.textContent = state.rpm;
+            if (statCutoff) statCutoff.textContent = `${pct}% ${dir.toUpperCase()}`;
+            if (statDir) statDir.textContent = dir;
+
+            const statRpmMobile = document.getElementById('stat-rpm-mobile');
+            const statCutoffMobile = document.getElementById('stat-cutoff-mobile');
+            if (statRpmMobile) statRpmMobile.textContent = state.rpm;
+            if (statCutoffMobile) statCutoffMobile.textContent = `${pct}%`;
+        }
+
+        // Toggles & View Mode Switcher
+        // Swaps a chip between its "on" colour set and the muted "off" set.
+        function paintChip(chip, checked, onClasses) {
+            const offClasses = ['bg-slate-100', 'hover:bg-slate-200', 'text-slate-500', 'border-slate-200'];
+            onClasses.forEach(c => chip.classList.toggle(c, checked));
+            offClasses.forEach(c => chip.classList.toggle(c, !checked));
+        }
+
+        const chkLabels = document.getElementById('chk-labels');
+        const chipLabels = document.getElementById('chip-labels');
+        chkLabels.addEventListener('change', () => {
+            state.showLabels = chkLabels.checked;
+            paintChip(chipLabels, chkLabels.checked, ['bg-sky-50', 'hover:bg-sky-100', 'text-sky-700', 'border-sky-200']);
+        });
+
+        const chkSteam = document.getElementById('chk-steam');
+        const chipSteam = document.getElementById('chip-steam');
+        chkSteam.addEventListener('change', () => {
+            state.showSteam = chkSteam.checked;
+            paintChip(chipSteam, chkSteam.checked, ['bg-sky-50', 'hover:bg-sky-100', 'text-sky-700', 'border-sky-200']);
+        });
+
+        const chkViewMode = document.getElementById('chk-view-mode');
+        const chipViewMode = document.getElementById('chip-view-mode');
+        const iconViewMode = document.getElementById('icon-view-mode');
+        chkViewMode.addEventListener('change', () => {
+            const dark = chkViewMode.checked;
+            state.viewMode = dark ? 'blueprint' : 'light';
+            // The chip names the mode you would switch to, not the one you are in.
+            document.getElementById('txt-view-mode').textContent = dark ? 'Light Mode' : 'Dark Mode';
+            popover.classList.toggle('dark', dark);
+            if (iconViewMode) {
+                iconViewMode.classList.toggle('fa-sun', dark);
+                iconViewMode.classList.toggle('fa-moon', !dark);
+            }
+            paintChip(chipViewMode, dark, ['bg-sky-50', 'hover:bg-sky-100', 'text-sky-700', 'border-sky-200']);
+        });
+
+        // Badge popover: the component cards are the single source of the copy,
+        // so the popover reads its title and description straight off them.
+        const popover = document.getElementById('part-popover');
+        const popoverNum = document.getElementById('popover-num');
+        const popoverTitle = document.getElementById('popover-title');
+        const popoverDesc = document.getElementById('popover-desc');
+        const partInfo = {
+            '1': { title: 'Expansion Link', desc: 'Curved slotted link rocked by eccentric rod.' },
+            '2': { title: 'Eccentric Crank', desc: 'Return crank providing 90° offset phase motion.' },
+            '3': { title: 'Radius Rod', desc: 'Transfers die block motion to combination lever.' },
+            '4': { title: 'Comb. Lever', desc: 'Combines motion for lead lap & stroke.' },
+            '5': { title: 'Crosshead Pin', desc: 'Linear slider driven by main piston rod.' },
+            '6': { title: 'Piston Valve', desc: 'Spool valve directing live & exhaust steam.' },
+            '7': { title: 'Main Cylinder', desc: 'Double-acting cylinder housing main piston.' },
+            '8': { title: 'Reverse Rod', desc: 'Shifts radius rod die block in link slot.' }
+        };
+
+        let popoverPart = null;
+
+        function openPopover(num) {
+            const info = partInfo[num];
+            if (!info) return;
+            popoverPart = num;
+            popoverNum.textContent = num;
+            popoverTitle.textContent = info.title;
+            popoverDesc.textContent = info.desc;
+            popover.classList.remove('hidden');
+
+            state.activePart = parseInt(num);
+            positionPopover();
+        }
+
+        function closePopover() {
+            popoverPart = null;
+            popover.classList.add('hidden');
+            state.activePart = null;
+        }
+
+        // Keeps the popover glued to its badge while the mechanism runs, flipping
+        // to the other side and clamping when it would overflow the viewport.
+        function positionPopover() {
+            if (!popoverPart) return;
+            const hit = badgeHits.find(b => b.num === popoverPart);
+            if (!hit) { closePopover(); return; }
+
+            const box = canvas.getBoundingClientRect();
+            const pw = popover.offsetWidth;
+            const ph = popover.offsetHeight;
+            const gap = hit.r + 10;
+
+            let left = hit.sx + gap;
+            if (left + pw > box.width - 6) left = hit.sx - gap - pw;
+            left = Math.max(6, Math.min(left, box.width - pw - 6));
+
+            let top = hit.sy - ph / 2;
+            top = Math.max(6, Math.min(top, box.height - ph - 6));
+
+            popover.style.left = left + 'px';
+            popover.style.top = top + 'px';
+        }
+
+        function badgeAt(clientX, clientY) {
+            const box = canvas.getBoundingClientRect();
+            const mx = clientX - box.left;
+            const my = clientY - box.top;
+            return badgeHits.find(b => Math.hypot(mx - b.sx, my - b.sy) <= b.r + 4);
+        }
+
+        canvas.addEventListener('click', (e) => {
+            const hit = badgeAt(e.clientX, e.clientY);
+            if (!hit) return closePopover();
+            if (hit.num === popoverPart) return closePopover();
+            openPopover(hit.num);
+        });
+
+        // Badges are the only clickable thing on the canvas, so only they get a pointer.
+        canvas.addEventListener('mousemove', (e) => {
+            const hit = badgeAt(e.clientX, e.clientY);
+            canvas.style.cursor = hit ? 'pointer' : '';
+            state.hoverPart = hit ? parseInt(hit.num) : null;
+        });
+
+        canvas.addEventListener('mouseleave', () => { state.hoverPart = null; });
+
+        document.getElementById('popover-close').addEventListener('click', () => closePopover());
+
+        // No badges to anchor to once labels are switched off.
+        chkLabels.addEventListener('change', () => {
+            if (!chkLabels.checked) closePopover();
+        });
+
+        // Launch animation loop on window load
+        window.onload = function() {
+            resizeCanvas();
+            requestAnimationFrame(animate);
+        };
+    </script>
+</body>
+</html>

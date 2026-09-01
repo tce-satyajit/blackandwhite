@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scotch Yoke — Simple Harmonic Motion</title>
+    <!-- Local vendored assets - runs fully offline, no CDN required -->
+    <script src="vendor/tailwind.js"></script>
+    <link href="vendor/fontawesome.css" rel="stylesheet">
+    <link href="vendor/fonts.css" rel="stylesheet">
+    <style>
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+            color: #0f172a;
+            overflow-x: hidden;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        canvas {
+            touch-action: none;
+        }
+
+        /* Custom light scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #e2e8f0;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+
+        /* Range slider styling for Light Theme */
+        /* Track and thumb follow the same neutral palette as the pill buttons:
+           light grey rail, dark slate thumb ringed in white. */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: #e5e7eb;
+            height: 6px;
+            border-radius: 999px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #0f172a;
+            border: 2px solid #ffffff;
+            cursor: pointer;
+            box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(15, 23, 42, 0.25);
+            transition: transform 0.1s ease, background-color 0.2s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            background: #334155;
+        }
+        input[type=range]:focus-visible::-webkit-slider-thumb {
+            box-shadow: 0 0 0 1px #e5e7eb, 0 0 0 4px rgba(15, 23, 42, 0.18);
+        }
+
+        /* ---- Loading veil -------------------------------------------
+           Vendored Tailwind, the fonts and (in the 3D build) three.js all have
+           to arrive before the page means anything. This covers the half-built
+           layout until the simulation has actually started. */
+        #loader {
+            position: fixed; inset: 0; z-index: 100;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 14px;
+            background: #f1f5f9;
+            transition: opacity .35s ease, visibility .35s ease;
+        }
+        /* pointer-events goes the instant the class lands, so a throttled or
+           interrupted transition can never leave the veil swallowing clicks */
+        #loader.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+        #loader .ring {
+            width: 38px; height: 38px; border-radius: 50%;
+            border: 3px solid #cbd5e1; border-top-color: #0f172a;
+            animation: loaderspin .8s linear infinite;
+        }
+        #loader .cap {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 13px; font-weight: 600; letter-spacing: .02em; color: #64748b;
+        }
+        @keyframes loaderspin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+            #loader .ring { animation-duration: 2.4s; }
+        }
+
+        .glass-panel {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        /* Popover follows the badge every frame, so no transition on position */
+        #part-popover.dark {
+            background: #1e293b;
+            border-color: #38bdf8;
+        }
+        #part-popover.dark h4 { color: #f1f5f9; }
+        #part-popover.dark p { color: #cbd5e1; }
+        #part-popover.dark button { color: #64748b; }
+
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none bg-slate-100">
+
+    <div id="loader">
+        <div class="ring"></div>
+        <p class="cap">Loading Scotch Yoke Mechanism&hellip;</p>
+    </div>
+
+    <header class="glass-panel sticky top-0 z-30 px-4  border-b border-slate-200 shrink-0">
+        <div class="w-full flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div>
+                    <h1 class="font-bold text-base text-slate-800 flex items-center gap-2 leading-tight">
+                        Scotch Yoke Mechanism
+                    </h1>
+                    <p class="text-[14px] text-slate-500">Rotation into Exact Simple Harmonic Motion</p>
+                </div>
+            </div>
+
+            <!-- Header Quick Stats -->
+            <div class="hidden sm:flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 text-l text-slate-600 calibri">
+                <div>RPM: <span id="stat-rpm" class="text-sky-600 font-bold">20</span></div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div>Stroke: <span id="stat-stroke" class="text-emerald-600 font-bold">190</span></div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div>Displacement: <span id="stat-disp" class="text-amber-600 font-bold">+95</span></div>
+            </div>
+        </div>
+    </header>
+
+    <main class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+
+        <!-- Simulation viewport card -->
+        <div class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+
+            <!-- Canvas Overlay UI Badge -->
+            <div class="absolute top-3 left-3 z-10 flex gap-2 sm:hidden">
+                <div class="bg-white/95 backdrop-blur border border-slate-200 shadow-sm rounded-lg px-2.5 py-1 text-[11px] text-slate-700 mono flex items-center gap-2">
+                    <div>RPM: <span id="stat-rpm-mobile" class="text-sky-600 font-bold">20</span></div>
+                    <div>Stroke: <span id="stat-stroke-mobile" class="text-emerald-600 font-bold">190</span></div>
+                </div>
+            </div>
+
+            <!-- Canvas element -->
+            <div class="w-full flex-1 min-h-0 relative bg-slate-50 flex items-center justify-center overflow-hidden">
+                <canvas id="simCanvas" class="w-full h-full block cursor-grab active:cursor-grabbing"></canvas>
+
+                <!-- Detail popover, pinned beside the number badge that was clicked -->
+                <div id="part-popover" class="hidden absolute z-20 w-56 rounded-xl border border-sky-200 bg-white shadow-lg p-2.5">
+                    <button id="popover-close" class="absolute top-1 right-1.5 w-5 h-5 text-slate-400 hover:text-slate-700 text-sm leading-none" title="Close">&times;</button>
+                    <div class="flex items-center gap-1.5 mb-1 pr-4">
+                        <span id="popover-num" class="w-5 h-5 shrink-0 rounded-full bg-sky-100 border border-sky-300 text-sky-700 text-[10px] font-bold flex items-center justify-center font-mono">1</span>
+                        <h4 id="popover-title" class="text-xs font-bold text-slate-800 leading-tight"></h4>
+                    </div>
+                    <p id="popover-desc" class="text-[11px] text-slate-600 leading-snug"></p>
+                </div>
+
+            </div>
+
+            <div class="p-2.5 bg-slate-50/90 border-t border-slate-200 flex flex-col gap-2">
+
+                <!-- Playback Controls + Sliders Grid -->
+                <div class="flex flex-col lg:flex-row gap-2">
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 flex-1 min-w-0">
+                        <!-- Control 1: Crank length, the link that decides Grashof -->
+                        <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center text-[14px]">
+                                <label for="crank-slider" class="font-semibold text-slate-700 flex items-center gap-1.5">
+                                    <span class="w-4 h-4 rounded-full bg-sky-100 text-sky-700 border border-sky-300 text-[9px] flex items-center justify-center font-mono">1</span>
+                                    Crank Radius
+                                </label>
+                                <span id="val-crank" class="mono text-sky-700 font-bold">95</span>
+                            </div>
+                            <input id="crank-slider" type="range" min="40" max="140" value="95" class="w-full">
+                            <div class="flex justify-between text-[9px] text-slate-500 mono">
+                                <span>Short (40)</span>
+                                <span id="lbl-limit">Stroke = 2r</span>
+                                <span>Long (140)</span>
+                            </div>
+                        </div>
+
+                        <!-- Control 2: Crank speed -->
+                        <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center text-[14px]">
+                                <label for="speed-slider" class="font-semibold text-slate-700 flex items-center gap-1.5">
+                                    <i class="fa-solid fa-gauge-high text-amber-600"></i> Crank Speed
+                                </label>
+                                <span id="val-speed" class="mono text-amber-600 font-bold">20 RPM</span>
+                            </div>
+                            <input id="speed-slider" type="range" min="0" max="120" value="20" class="w-full">
+                            <div class="flex justify-between text-[9px] text-slate-500 mono">
+                                <span>Stop (0)</span>
+                                <span>Normal (20)</span>
+                                <span>High (120 RPM)</span>
+                            </div>
+                        </div>
+
+                        <!-- Control 3: Manual crank angle scrub -->
+                        <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                            <div class="flex justify-between items-center text-[14px]">
+                                <label for="angle-slider" class="font-semibold text-slate-700 flex items-center gap-1.5">
+                                    <i class="fa-solid fa-arrows-spin text-emerald-600"></i> Crank Angle
+                                </label>
+                                <span id="val-angle" class="mono text-emerald-600 font-bold">0&deg;</span>
+                            </div>
+                            <input id="angle-slider" type="range" min="0" max="360" value="0" class="w-full">
+                            <div class="flex justify-between text-[9px] text-slate-500 mono">
+                                <span>0&deg;</span>
+                                <span>180&deg;</span>
+                                <span>360&deg;</span>
+                            </div>
+                        </div>
+                </div>
+
+                <!-- Toggle + Playback Controls Group -->
+                    <div class="flex items-center justify-center gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <label id="chip-labels" class="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition flex items-center gap-1.5 cursor-pointer">
+                        <input id="chk-labels" type="checkbox" checked class="w-3.5 h-3.5 accent-slate-900 cursor-pointer">
+                        <span>Labels</span>
+                    </label>
+                    <label id="chip-trace" class="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition flex items-center gap-1.5 cursor-pointer">
+                        <input id="chk-trace" type="checkbox" checked class="w-3.5 h-3.5 accent-slate-900 cursor-pointer">
+                        <span>SHM Graph</span>
+                    </label>
+                    <label id="chip-view-mode" class="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition flex items-center gap-1.5 cursor-pointer">
+                        <input id="chk-view-mode" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer">
+                        <span id="txt-view-mode">Dark Mode</span>
+                    </label>
+                    <label id="chip-sound" class="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition flex items-center gap-1.5 cursor-pointer">
+                        <input id="chk-sound" type="checkbox" checked class="w-3.5 h-3.5 accent-slate-900 cursor-pointer">
+                        <span>Sound</span>
+                    </label>
+                        <button id="btn-play" class="px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition flex items-center gap-1.5">
+                            <i id="play-icon" class="fa-solid fa-play"></i>
+                            <span id="play-text">Start</span>
+                        </button>
+                        <button id="btn-step-prev" class="p-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition" title="Step Back (10°)">
+                            <i class="fa-solid fa-backward-step"></i>
+                        </button>
+                        <button id="btn-step-next" class="p-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition" title="Step Forward (10°)">
+                            <i class="fa-solid fa-forward-step"></i>
+                        </button>
+                        <button id="btn-reset" class="p-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition" title="Reset Simulation">
+                            <i class="fa-solid fa-rotate-left"></i>
+                        </button>
+                        <button id="btn-info" class="p-1.5 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-xs font-medium transition" title="How this mechanism works" aria-label="How this mechanism works">
+                            <i class="fa-solid fa-circle-info"></i>
+                        </button>
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    </main>
+
+
+    <!-- Explainer modal -->
+    <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div id="info-backdrop" class="absolute inset-0 bg-slate-900/50"></div>
+        <div class="relative w-full max-w-2xl max-h-[86vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div class="shrink-0 border-b border-slate-200 px-5 py-3 flex items-start justify-between gap-4">
+                <div>
+                    <h2 class="text-[18px] font-bold text-slate-800">Scotch Yoke &mdash; Rotation into Simple Harmonic Motion</h2>
+                    <p class="text-[14px] text-slate-500">A slot, a pin, and why the output is an exact cosine</p>
+                </div>
+                <button id="info-close" aria-label="Close"
+                        class="shrink-0 w-7 h-7 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition text-[24px] leading-none">&times;</button>
+            </div>
+
+            <div class="overflow-y-auto px-5 py-4 text-[16px] text-slate-700 leading-relaxed space-y-4">
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">1. What the mechanism does</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>It turns steady rotation into straight-line <b>reciprocation</b> &mdash; back-and-forth travel along one axis.</li>
+                        <li>A <b>pin</b> on the crank runs inside a straight <b>slot</b> cut across the yoke.</li>
+                        <li>The yoke is held by guides so it can only slide horizontally; the slot lets the pin move freely up and down inside it.</li>
+                        <li>So the pin's <i>sideways</i> position is handed to the yoke, while its <i>vertical</i> movement is absorbed by the slot.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">2. Why the motion is exactly sinusoidal</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The pin sits at <b class="mono">x = r&nbsp;cos&nbsp;&theta;</b> from the crank centre, so the yoke's displacement <i>is</i> that cosine.</li>
+                        <li>Differentiating: velocity <b class="mono">v = &minus;r&omega;&nbsp;sin&nbsp;&theta;</b>, acceleration <b class="mono">a = &minus;r&omega;&sup2;&nbsp;cos&nbsp;&theta;</b>.</li>
+                        <li>Which means <b class="mono">a = &minus;&omega;&sup2;x</b>: acceleration proportional to displacement and always directed back toward the centre.</li>
+                        <li>That relation <i>is</i> the definition of <b>simple harmonic motion</b>. The yoke is a mechanical SHM generator.</li>
+                        <li>The <b>stroke is 2r</b> &mdash; twice the crank radius &mdash; whatever the speed.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">3. How it differs from a piston engine</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>A normal slider-crank joins crank to piston with a <b>connecting rod</b> of finite length.</li>
+                        <li>That rod swings as it goes, so the piston's motion is only <i>approximately</i> sinusoidal &mdash; it hurries one half of the stroke and dawdles the other.</li>
+                        <li>The Scotch yoke has no connecting rod at all, so it gives a <b>pure cosine</b> at any crank radius.</li>
+                        <li>The trade-off is wear: the pin slides hard against the slot faces instead of turning in a bearing.</li>
+                        <li>It is used where honest SHM matters &mdash; test rigs, vibration tables, some pumps and valve drives.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">4. Reading the graph</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The curve plots yoke displacement against crank angle across one full turn.</li>
+                        <li>The travelling dot marks where the mechanism is right now.</li>
+                        <li><b>Amplitude equals the crank radius</b>, so lengthening the crank stretches the wave vertically without changing its shape.</li>
+                        <li>The yoke is <b>fastest where the curve is steepest</b> (mid-stroke, &theta; = 90&deg; and 270&deg;) and momentarily <b>stationary at the crests</b>, the dead points.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">5. Things to try</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>Change the <b>crank radius</b>: the stroke follows as 2r, but the motion stays a cosine.</li>
+                        <li>Scrub the <b>crank angle</b> by hand and watch the dot walk along the curve.</li>
+                        <li>Watch the yoke pause at each end while the crank keeps turning at a constant rate.</li>
+                        <li>Listen: the drive pitch rises at mid-stroke and falls at the dead points, following <span class="mono">|sin&nbsp;&theta;|</span>.</li>
+                    </ul>
+                </section>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ---- Defaults ----
+        // Where the controls sit on load and after a reset. Change these and the
+        // sliders, the reset button and the opening readouts all follow.
+        const DEFAULT_CRANK = 95;   // crank radius, giving a stroke of 2r = 190
+        const DEFAULT_RPM = 20;
+
+        // ---- State ----
+        const state = {
+            running: false,
+            rpm: DEFAULT_RPM,
+            angle: 0,          // crank angle, radians
+            crank: DEFAULT_CRANK,   // crank radius; stroke is twice this
+            sound: true,
+            showLabels: true,
+            showTrace: true,
+            viewMode: 'light',
+            activePart: null,
+            hoverPart: null,
+            time: 0
+        };
+
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        let badgeHits = [];
+
+        // ---- Fixed geometry ----
+        // The slot is tall enough to swallow the pin's full vertical travel at the
+        // largest crank radius, so the yoke never runs out of slot.
+        const geo = {
+            O: { x: 0, y: 0 },      // crank centre, on the axis of symmetry
+            rMax: 140,
+            yokeW: 88,              // yoke body width
+            slotW: 32,              // slot width, a shade over the pin
+            slotHalfH: 152,         // half the slot's length
+            yokeFrame: 34,          // material above and below the slot
+            rodLen: 440,            // yoke centre to either slider centre
+            guideX: 218,            // each guide sits on the band the rod always covers
+            guideW: 54,
+            guideHalfH: 44,
+            sliderW: 96,
+            sliderH: 56,
+            rodH: 12,               // half-thickness of the connecting rods
+            guideY: 36,             // guide rail offset from the axis
+            baseY: 210
+        };
+        geo.yokeHalfH = geo.slotHalfH + geo.yokeFrame;
+
+        // ---- Kinematics ----
+        // The slot is vertical, so it transmits only the pin's horizontal position and
+        // absorbs the vertical component entirely. That is the whole mechanism.
+        function solve(theta, r) {
+            const pin = {
+                x: geo.O.x + r * Math.cos(theta),
+                y: geo.O.y + r * Math.sin(theta)
+            };
+            const disp = r * Math.cos(theta);          // displacement from mid-stroke
+            const yokeX = geo.O.x + disp;              // slot centreline follows the pin
+            // Both sliders hang off the same yoke, so they travel together.
+            return {
+                pin, disp, yokeX,
+                sliderR: yokeX + geo.rodLen,
+                sliderL: yokeX - geo.rodLen
+            };
+        }
+
+        // Normalised yoke speed: |d(disp)/d(theta)| / r = |sin(theta)|.
+        // Zero at the dead points, one at mid-stroke.
+        function speedFraction(theta) {
+            return Math.abs(Math.sin(theta));
+        }
+
+        // ---- Canvas sizing ----
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            drawSimulation();
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        // ---- Drive audio ----
+        // Continuous loop whose pitch tracks |sin(theta)| - the yoke's own speed - so it
+        // audibly eases at each dead point and picks up through mid-stroke.
+        const MOTOR_URL = 'vendor/audio/motor.mp3';
+        let audioCtx = null, motorBuffer = null, motorSrc = null, motorGain = null;
+
+        // Tuned to the clip itself (5.22 s, 48 kHz, peak 0.27, RMS 0.021):
+        //  - it opens with 66 ms of silence, which would punch a gap into the drone on
+        //    every loop, so playback both starts and wraps past that point;
+        //  - it is quiet, so the gain range makes up the level. Peak x MAX lands at
+        //    0.71, comfortably short of clipping.
+        const MOTOR_LOOP_START = 0.07;   // seconds, just past the lead-in silence
+        const MOTOR_GAIN_MIN = 1.2;      // at the dead points, where the yoke stalls
+        const MOTOR_GAIN_MAX = 2.6;      // at mid-stroke, where it runs fastest
+
+        function initAudio() {
+            if (audioCtx) {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                return;
+            }
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (!AC) return;
+            audioCtx = new AC();
+            fetch(MOTOR_URL)
+                .then(r => r.arrayBuffer())
+                .then(b => audioCtx.decodeAudioData(b))
+                .then(buf => { motorBuffer = buf; })
+                .catch(err => console.warn('audio unavailable:', err));
+        }
+
+        function startMotor() {
+            if (motorSrc || !motorBuffer || !audioCtx || audioCtx.state !== 'running') return;
+            motorSrc = audioCtx.createBufferSource();
+            motorSrc.buffer = motorBuffer;
+            motorSrc.loop = true;
+            motorSrc.loopStart = MOTOR_LOOP_START;
+            motorSrc.loopEnd = motorBuffer.duration;
+            motorGain = audioCtx.createGain();
+            motorGain.gain.value = 0;
+            motorSrc.connect(motorGain).connect(audioCtx.destination);
+            motorSrc.start(0, MOTOR_LOOP_START);   // skip the lead-in on the first pass too
+        }
+
+        function stopMotor() {
+            if (!motorSrc) return;
+            const src = motorSrc, gain = motorGain, t = audioCtx.currentTime;
+            motorSrc = null; motorGain = null;
+            gain.gain.cancelScheduledValues(t);
+            gain.gain.setValueAtTime(gain.gain.value, t);
+            gain.gain.linearRampToValueAtTime(0, t + 0.15);
+            setTimeout(() => { try { src.stop(); } catch (e) {} }, 300);
+        }
+
+        function updateMotor() {
+            const shouldRun = state.sound && state.running && state.rpm > 0;
+            if (shouldRun) startMotor(); else stopMotor();
+            if (!motorSrc) return;
+            const load = speedFraction(state.angle);
+            const t = audioCtx.currentTime;
+            const base = 0.55 + (state.rpm / 120) * 0.95;
+            motorSrc.playbackRate.setTargetAtTime(base * (0.78 + 0.34 * load), t, 0.05);
+            motorGain.gain.setTargetAtTime(MOTOR_GAIN_MIN + (MOTOR_GAIN_MAX - MOTOR_GAIN_MIN) * load, t, 0.05);
+        }
+
+        // ---- Drawing ----
+        function drawSimulation() {
+            const w = canvas.getBoundingClientRect().width;
+            const h = canvas.getBoundingClientRect().height;
+            ctx.clearRect(0, 0, w, h);
+            ctx.save();
+
+            const model = { minX: -680, maxX: 680, minY: -215, maxY: 268 };
+            const pad = 24;
+            const scale = Math.min((w - pad) / (model.maxX - model.minX),
+                                   (h - pad) / (model.maxY - model.minY));
+            const centerX = w * 0.5 - ((model.minX + model.maxX) / 2) * scale;
+            const centerY = h * 0.5 - ((model.minY + model.maxY) / 2) * scale;
+            ctx.translate(centerX, centerY);
+            ctx.scale(scale, scale);
+
+            const isBlueprint = state.viewMode === 'blueprint';
+            const highlightPart = state.activePart || state.hoverPart;
+            const TAU = Math.PI * 2;
+
+            const theme = isBlueprint ? {
+                line: '#e2e8f0', lineSoft: '#64748b', fill: '#0f172a', fillAlt: '#1e293b',
+                assemblyFill: '#1d3f66', crankFill: '#3a2f18', boreFill: '#475569',
+                pin: '#d97706', graph: '#38bdf8', bg: '#0f172a'
+            } : {
+                line: '#1e293b', lineSoft: '#94a3b8', fill: '#ffffff', fillAlt: '#f1f5f9',
+                assemblyFill: '#bcdcf5', crankFill: '#f9dcb4', boreFill: '#cbd5e1',
+                pin: '#d97706', graph: '#0284c7', bg: '#ffffff'
+            };
+
+            if (isBlueprint) {
+                ctx.save();
+                ctx.fillStyle = theme.bg;
+                ctx.fillRect(-centerX / scale, -centerY / scale, w / scale, h / scale);
+                ctx.restore();
+            }
+
+            function partColor(p, fallback, hi = '#0284c7') {
+                return (p != null && highlightPart === p) ? hi : fallback;
+            }
+            function partWidth(p, base) {
+                return (p != null && highlightPart === p) ? base + 1.8 : base;
+            }
+            function rod(x1, y1, x2, y2, width, part, fill) {
+                const a = Math.atan2(y2 - y1, x2 - x1), rr = width / 2;
+                ctx.beginPath();
+                ctx.arc(x1, y1, rr, a + Math.PI / 2, a - Math.PI / 2);
+                ctx.arc(x2, y2, rr, a - Math.PI / 2, a + Math.PI / 2);
+                ctx.closePath();
+                ctx.fillStyle = fill || theme.fill;
+                ctx.fill();
+                ctx.strokeStyle = partColor(part, theme.line);
+                ctx.lineWidth = partWidth(part, 2);
+                ctx.stroke();
+            }
+            function boxPart(x, y, bw, bh, part, fill, r = 4) {
+                ctx.fillStyle = fill || theme.fill;
+                ctx.strokeStyle = partColor(part, theme.line);
+                ctx.lineWidth = partWidth(part, 2.2);
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(x, y, bw, bh, r); else ctx.rect(x, y, bw, bh);
+                ctx.fill(); ctx.stroke();
+            }
+
+            function drawBadge(lbl) {
+                const hot = highlightPart === parseInt(lbl.num);
+                ctx.save();
+                ctx.fillStyle = hot ? '#0284c7' : (isBlueprint ? '#1e293b' : '#ffffff');
+                ctx.strokeStyle = hot ? '#0f172a' : '#0284c7';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath(); ctx.arc(lbl.x, lbl.y, 13, 0, TAU); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = hot ? '#ffffff' : '#0284c7';
+                ctx.font = 'bold 14px JetBrains Mono, monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(lbl.num, lbl.x, lbl.y);
+                ctx.restore();
+            }
+
+            const kin = solve(state.angle, state.crank);
+
+            // --- 0. Support ---
+            const baseY = geo.baseY;
+            ctx.fillStyle = theme.fillAlt;
+            ctx.strokeStyle = partColor(5, theme.line);
+            ctx.lineWidth = partWidth(5, 2.2);
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(-660, baseY, 1320, 46, 10);
+            else ctx.rect(-660, baseY, 1320, 46);
+            ctx.fill(); ctx.stroke();
+
+            // Bearing pedestal, kept low so the crank web covers most of it
+            boxPart(geo.O.x - 46, geo.O.y + 96, 92, baseY - geo.O.y - 96, 5, theme.fillAlt, 6);
+
+            // --- 1. Crank, behind the yoke so the pin reads as sitting in the slot ---
+            const crankR = state.crank + 26;
+            ctx.fillStyle = theme.crankFill;
+            ctx.strokeStyle = partColor(1, theme.line);
+            ctx.lineWidth = partWidth(1, 2.2);
+            ctx.beginPath(); ctx.arc(geo.O.x, geo.O.y, crankR, 0, TAU); ctx.fill(); ctx.stroke();
+
+            ctx.fillStyle = theme.fillAlt;
+            ctx.strokeStyle = theme.lineSoft;
+            ctx.lineWidth = 1.3;
+            for (let s = 0; s < 6; s++) {
+                const a0 = state.angle + s * TAU / 6 + 0.10;
+                const a1 = state.angle + (s + 1) * TAU / 6 - 0.10;
+                ctx.beginPath();
+                ctx.arc(geo.O.x, geo.O.y, crankR - 13, a0, a1);
+                ctx.arc(geo.O.x, geo.O.y, 26, a1, a0, true);
+                ctx.closePath();
+                ctx.fill(); ctx.stroke();
+            }
+            rod(geo.O.x, geo.O.y, kin.pin.x, kin.pin.y, 20, 1, theme.crankFill);
+
+            // Badge 1 belongs to the crank face, so it is drawn here rather than with the
+            // rest: the yoke passes over that spot and must occlude it, otherwise the
+            // badge appears to float above a part it sits behind.
+            const badge1 = { num: '1', x: -crankR * 0.62, y: crankR * 0.62 };
+            if (state.showLabels) drawBadge(badge1);
+
+            // Centre bearing belongs to the crank, so it is drawn here: the yoke
+            // assembly slides in front of it, not behind.
+            ctx.fillStyle = theme.pin;
+            ctx.strokeStyle = theme.line;
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(geo.O.x, geo.O.y, 9, 0, TAU); ctx.fill(); ctx.stroke();
+
+            // --- 3. Yoke assembly: slot, rods and both sliders are one rigid casting,
+            // so they are drawn as a single closed outline rather than separate pieces
+            // butted together. Everything here shares one displacement, x = r cos(theta).
+            const yx = kin.yokeX;
+            const sH = geo.sliderH / 2, rH = geo.rodH, yH = geo.yokeHalfH;
+            const L1 = kin.sliderL - geo.sliderW / 2, L2 = kin.sliderL + geo.sliderW / 2;
+            const R1 = kin.sliderR - geo.sliderW / 2, R2 = kin.sliderR + geo.sliderW / 2;
+            const Y1 = yx - geo.yokeW / 2, Y2 = yx + geo.yokeW / 2;
+
+            ctx.fillStyle = theme.assemblyFill;
+            ctx.strokeStyle = partColor(3, theme.line);
+            ctx.lineWidth = partWidth(3, 2.4);
+            // Profile of the whole casting, clockwise from the left slider's top-left:
+            // slider, step down to rod, up the yoke, and symmetrically back along the
+            // bottom. Every corner is filleted - nothing on a cast part is a sharp edge.
+            const prof = [
+                [L1, -sH], [L2, -sH], [L2, -rH], [Y1, -rH], [Y1, -yH],
+                [Y2, -yH], [Y2, -rH], [R1, -rH], [R1, -sH], [R2, -sH],
+                [R2,  sH], [R1,  sH], [R1,  rH], [Y2,  rH], [Y2,  yH],
+                [Y1,  yH], [Y1,  rH], [L2,  rH], [L2,  sH], [L1,  sH]
+            ];
+            // The shortest edge is the slider-to-rod step (sH - rH), and arcTo needs the
+            // radius to fit within half of it, so the fillet is clamped to that.
+            const fillet = Math.min(9, (sH - rH) / 2 - 1);
+            const midOf = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+
+            ctx.beginPath();
+            const nP = prof.length;
+            const start = midOf(prof[nP - 1], prof[0]);
+            ctx.moveTo(start[0], start[1]);
+            for (let i = 0; i < nP; i++) {
+                const cur = prof[i], nxt = prof[(i + 1) % nP];
+                const m = midOf(cur, nxt);
+                ctx.arcTo(cur[0], cur[1], m[0], m[1], fillet);
+            }
+            ctx.closePath();
+
+            // The slot, as a rounded hole in the same path
+            if (ctx.roundRect) {
+                ctx.roundRect(yx - geo.slotW / 2, -geo.slotHalfH, geo.slotW, geo.slotHalfH * 2, geo.slotW / 2.6);
+            } else {
+                ctx.rect(yx - geo.slotW / 2, -geo.slotHalfH, geo.slotW, geo.slotHalfH * 2);
+            }
+            ctx.fill('evenodd');
+            ctx.stroke();
+
+            // --- 4. Guides: a fixed block each side, the rod running through its bore.
+            // Drawn after the assembly so the rod passes behind each block, and sized so
+            // the rod never withdraws from the bore across the full crank travel.
+            [-geo.guideX, geo.guideX].forEach(gx => {
+                const bore = geo.rodH + 5;
+
+                // Block body
+                ctx.fillStyle = theme.boreFill;
+                ctx.strokeStyle = partColor(4, theme.line);
+                ctx.lineWidth = partWidth(4, 2.2);
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(gx - geo.guideW / 2, -geo.guideHalfH, geo.guideW, geo.guideHalfH * 2, 10);
+                else ctx.rect(gx - geo.guideW / 2, -geo.guideHalfH, geo.guideW, geo.guideHalfH * 2);
+                ctx.fill(); ctx.stroke();
+
+                // Bore filled grey rather than left open, so it reads as the bearing
+                // surface the rod runs against instead of a hole through the block.
+                ctx.fillStyle = theme.boreFill;
+                ctx.strokeStyle = partColor(4, theme.lineSoft);
+                ctx.lineWidth = partWidth(4, 1.6);
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(gx - geo.guideW / 2 - 2, -bore, geo.guideW + 4, bore * 2, 5);
+                else ctx.rect(gx - geo.guideW / 2 - 2, -bore, geo.guideW + 4, bore * 2);
+                ctx.fill(); ctx.stroke();
+
+                // Foot tying the guide down to the base
+                ctx.fillStyle = theme.fillAlt;
+                ctx.strokeStyle = partColor(4, theme.lineSoft);
+                ctx.lineWidth = partWidth(4, 1.8);
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(gx - 16, geo.guideHalfH - 4, 32, baseY - geo.guideHalfH + 4, 4);
+                else ctx.rect(gx - 16, geo.guideHalfH - 4, 32, baseY - geo.guideHalfH + 4);
+                ctx.fill(); ctx.stroke();
+            });
+
+            // --- 5. Crank pin, on top: it rides in the slot ---
+            ctx.fillStyle = partColor(2, theme.pin);
+            ctx.strokeStyle = theme.line;
+            ctx.lineWidth = partWidth(2, 2);
+            ctx.beginPath(); ctx.arc(kin.pin.x, kin.pin.y, 13, 0, TAU); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.arc(kin.pin.x, kin.pin.y, 5, 0, TAU); ctx.stroke();
+
+
+            // --- 6. Displacement graph ---
+            const gx0 = 270, gx1 = 655, gy = -140, gAmp = 52;
+            if (state.showTrace) {
+                ctx.save();
+                ctx.strokeStyle = theme.lineSoft;
+                ctx.lineWidth = 1.2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(gx0, gy); ctx.lineTo(gx1, gy);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // x = r cos(theta), scaled so the largest crank fills the plot
+                const amp = gAmp * (state.crank / geo.rMax);
+                ctx.strokeStyle = theme.graph;
+                ctx.lineWidth = 2.2;
+                ctx.beginPath();
+                for (let i = 0; i <= 120; i++) {
+                    const ph = (i / 120) * TAU;
+                    const px = gx0 + (i / 120) * (gx1 - gx0);
+                    const py = gy - amp * Math.cos(ph);
+                    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                }
+                ctx.stroke();
+
+                // Where the mechanism is now
+                const frac = ((state.angle % TAU) + TAU) % TAU / TAU;
+                const dx = gx0 + frac * (gx1 - gx0);
+                const dy = gy - amp * Math.cos(state.angle);
+                ctx.strokeStyle = theme.lineSoft;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 4]);
+                ctx.beginPath(); ctx.moveTo(dx, gy); ctx.lineTo(dx, dy); ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = theme.graph;
+                ctx.beginPath(); ctx.arc(dx, dy, 6, 0, TAU); ctx.fill();
+
+                ctx.fillStyle = theme.lineSoft;
+                ctx.font = '13px Inter, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'alphabetic';
+                ctx.fillText('x = r cos θ', gx0, gy - gAmp - 16);
+                ctx.textAlign = 'center';
+                ctx.fillText('0°', gx0, gy + gAmp + 26);
+                ctx.fillText('180°', (gx0 + gx1) / 2, gy + gAmp + 26);
+                ctx.fillText('360°', gx1, gy + gAmp + 26);
+                ctx.restore();
+            }
+
+            // --- 7. Badges ---
+            badgeHits = [];
+            if (state.showLabels) {
+                const onTop = [
+                    { num: '2', x: kin.pin.x + 26, y: kin.pin.y - 24 },
+                    { num: '3', x: yx, y: -geo.yokeHalfH - 24 },
+                    { num: '4', x: -geo.guideX, y: -geo.guideHalfH - 26 },
+                    { num: '5', x: -560, y: baseY + 23 }
+                ];
+                // Badge 1 was already painted behind the yoke, but it still needs a hit
+                // target, so it goes into badgeHits alongside the rest.
+                badgeHits = [badge1].concat(onTop).map(l => ({
+                    num: l.num, sx: centerX + l.x * scale, sy: centerY + l.y * scale, r: 13 * scale
+                }));
+                onTop.forEach(drawBadge);
+            }
+
+            ctx.restore();
+        }
+
+        // ---- Animation ----
+        let lastTime = performance.now();
+        function animate(now) {
+            const dt = Math.min(0.05, (now - lastTime) / 1000);
+            lastTime = now;
+            state.time += dt;
+
+            if (state.running && state.rpm > 0) {
+                const omega = state.rpm * Math.PI * 2 / 60;
+                state.angle = (state.angle + omega * dt) % (Math.PI * 2);
+                if (state.angle < 0) state.angle += Math.PI * 2;
+                document.getElementById('angle-slider').value = Math.round(state.angle * 180 / Math.PI);
+                document.getElementById('val-angle').textContent = `${Math.round(state.angle * 180 / Math.PI)}°`;
+                updateStats();
+            }
+
+            updateMotor();
+            drawSimulation();
+            positionPopover();
+            requestAnimationFrame(animate);
+        }
+
+        // ---- Controls ----
+        const btnPlay = document.getElementById('btn-play');
+        const playIcon = document.getElementById('play-icon');
+        const playText = document.getElementById('play-text');
+
+        function setPlayButton(running) {
+            playIcon.className = running ? 'fa-solid fa-pause' : 'fa-solid fa-play';
+            playText.textContent = running ? 'Stop' : 'Start';
+        }
+
+        btnPlay.addEventListener('click', () => {
+            initAudio();
+            state.running = !state.running;
+            setPlayButton(state.running);
+        });
+
+        function stepBy(deg) {
+            state.running = false;
+            setPlayButton(false);
+            state.angle = (state.angle + deg * Math.PI / 180 + Math.PI * 2) % (Math.PI * 2);
+            document.getElementById('angle-slider').value = Math.round(state.angle * 180 / Math.PI);
+            document.getElementById('val-angle').textContent = `${Math.round(state.angle * 180 / Math.PI)}°`;
+            updateStats();
+        }
+        document.getElementById('btn-step-next').addEventListener('click', () => stepBy(10));
+        document.getElementById('btn-step-prev').addEventListener('click', () => stepBy(-10));
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            state.angle = 0;
+            state.crank = DEFAULT_CRANK;
+            state.rpm = DEFAULT_RPM;
+            document.getElementById('crank-slider').value = DEFAULT_CRANK;
+            document.getElementById('speed-slider').value = DEFAULT_RPM;
+            document.getElementById('angle-slider').value = 0;
+            document.getElementById('val-angle').textContent = '0°';
+            updateStats();
+        });
+
+        document.getElementById('crank-slider').addEventListener('input', (e) => {
+            state.crank = parseInt(e.target.value);
+            updateStats();
+        });
+        document.getElementById('speed-slider').addEventListener('input', (e) => {
+            state.rpm = parseInt(e.target.value);
+            updateStats();
+        });
+        document.getElementById('angle-slider').addEventListener('input', (e) => {
+            const deg = parseInt(e.target.value);
+            state.angle = deg * Math.PI / 180;
+            document.getElementById('val-angle').textContent = `${deg}°`;
+            updateStats();
+        });
+
+        function updateStats() {
+            const kin = solve(state.angle, state.crank);
+            document.getElementById('val-crank').textContent = state.crank;
+            document.getElementById('val-speed').textContent = `${state.rpm} RPM`;
+
+            const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+            set('stat-rpm', state.rpm);
+            set('stat-rpm-mobile', state.rpm);
+            set('stat-stroke', (state.crank * 2).toFixed(0));
+            set('stat-stroke-mobile', (state.crank * 2).toFixed(0));
+            set('stat-disp', (kin.disp >= 0 ? '+' : '') + kin.disp.toFixed(0));
+        }
+
+        // ---- Chips ----
+        function paintChip(chip, checked, onClasses) {
+            const offClasses = ['bg-slate-100', 'hover:bg-slate-200', 'text-slate-400', 'border-slate-200'];
+            onClasses.forEach(c => chip.classList.toggle(c, checked));
+            offClasses.forEach(c => chip.classList.toggle(c, !checked));
+        }
+        const ON_CLASSES = ['bg-white', 'hover:bg-slate-50', 'text-slate-900', 'border-slate-200'];
+
+        const chkLabels = document.getElementById('chk-labels');
+        const chipLabels = document.getElementById('chip-labels');
+        chkLabels.addEventListener('change', () => {
+            state.showLabels = chkLabels.checked;
+            if (!chkLabels.checked) closePopover();
+            paintChip(chipLabels, chkLabels.checked, ON_CLASSES);
+        });
+
+        const chkTrace = document.getElementById('chk-trace');
+        const chipTrace = document.getElementById('chip-trace');
+        chkTrace.addEventListener('change', () => {
+            state.showTrace = chkTrace.checked;
+            paintChip(chipTrace, chkTrace.checked, ON_CLASSES);
+        });
+
+        const chkSound = document.getElementById('chk-sound');
+        const chipSound = document.getElementById('chip-sound');
+        chkSound.addEventListener('change', () => {
+            state.sound = chkSound.checked;
+            if (state.sound) initAudio(); else stopMotor();
+            paintChip(chipSound, chkSound.checked, ON_CLASSES);
+        });
+
+        const chkViewMode = document.getElementById('chk-view-mode');
+        const chipViewMode = document.getElementById('chip-view-mode');
+        chkViewMode.addEventListener('change', () => {
+            const dark = chkViewMode.checked;
+            state.viewMode = dark ? 'blueprint' : 'light';
+            document.getElementById('txt-view-mode').textContent = dark ? 'Light Mode' : 'Dark Mode';
+            popover.classList.toggle('dark', dark);
+            paintChip(chipViewMode, dark, ON_CLASSES);
+        });
+
+        // ---- Badge popover ----
+        const popover = document.getElementById('part-popover');
+        const popoverNum = document.getElementById('popover-num');
+        const popoverTitle = document.getElementById('popover-title');
+        const popoverDesc = document.getElementById('popover-desc');
+        const partInfo = {
+            '1': { title: 'Crank', desc: 'Turns at a steady rate. Its radius sets the stroke, which is 2r.' },
+            '2': { title: 'Crank Pin', desc: 'Rides in the slot, handing its horizontal position to the yoke.' },
+            '3': { title: 'Yoke Assembly', desc: 'Slot, rods and both sliders are one rigid piece. The slot absorbs the pin\u2019s vertical travel, so the whole assembly moves as x = r cos θ.' },
+            '4': { title: 'Guides', desc: 'A fixed block each side. The rods run through their bores, holding the assembly to one straight axis.' },
+            '5': { title: 'Support', desc: 'Frame carrying the crank bearing and the guide rails.' }
+        };
+
+        let popoverPart = null;
+
+        function openPopover(num) {
+            const info = partInfo[num];
+            if (!info) return;
+            popoverPart = num;
+            popoverNum.textContent = num;
+            popoverTitle.textContent = info.title;
+            popoverDesc.textContent = info.desc;
+            popover.classList.remove('hidden');
+            state.activePart = parseInt(num);
+            positionPopover();
+        }
+        function closePopover() {
+            popoverPart = null;
+            popover.classList.add('hidden');
+            state.activePart = null;
+        }
+        function positionPopover() {
+            if (!popoverPart) return;
+            const hit = badgeHits.find(b => b.num === popoverPart);
+            if (!hit) { closePopover(); return; }
+            const box = canvas.getBoundingClientRect();
+            const pw = popover.offsetWidth, ph = popover.offsetHeight;
+            const gap = hit.r + 10;
+            let left = hit.sx + gap;
+            if (left + pw > box.width - 6) left = hit.sx - gap - pw;
+            left = Math.max(6, Math.min(left, box.width - pw - 6));
+            let top = hit.sy - ph / 2;
+            top = Math.max(6, Math.min(top, box.height - ph - 6));
+            popover.style.left = left + 'px';
+            popover.style.top = top + 'px';
+        }
+        function badgeAt(clientX, clientY) {
+            const box = canvas.getBoundingClientRect();
+            const mx = clientX - box.left, my = clientY - box.top;
+            return badgeHits.find(b => Math.hypot(mx - b.sx, my - b.sy) <= b.r + 4);
+        }
+
+        canvas.addEventListener('click', (e) => {
+            initAudio();
+            const hit = badgeAt(e.clientX, e.clientY);
+            if (!hit) return closePopover();
+            if (hit.num === popoverPart) return closePopover();
+            openPopover(hit.num);
+        });
+        canvas.addEventListener('mousemove', (e) => {
+            const hit = badgeAt(e.clientX, e.clientY);
+            canvas.style.cursor = hit ? 'pointer' : '';
+            state.hoverPart = hit ? parseInt(hit.num) : null;
+        });
+        canvas.addEventListener('mouseleave', () => { state.hoverPart = null; });
+        document.getElementById('popover-close').addEventListener('click', () => closePopover());
+
+        // ---- Explainer modal ----
+        const infoModal = document.getElementById('info-modal');
+        function openInfo() { infoModal.classList.remove('hidden'); }
+        function closeInfo() { infoModal.classList.add('hidden'); }
+        document.getElementById('btn-info').addEventListener('click', openInfo);
+        document.getElementById('info-close').addEventListener('click', closeInfo);
+        document.getElementById('info-backdrop').addEventListener('click', closeInfo);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !infoModal.classList.contains('hidden')) closeInfo();
+        });
+
+        // ---- Launch ----
+        function hideLoader() {
+            const el = document.getElementById('loader');
+            if (el) el.classList.add('gone');
+        }
+        setTimeout(hideLoader, 8000);        // never trap the page behind the veil
+
+        window.onload = function () {
+            document.getElementById('crank-slider').value = DEFAULT_CRANK;
+            document.getElementById('speed-slider').value = DEFAULT_RPM;
+            updateStats();
+            resizeCanvas();
+            requestAnimationFrame(animate);
+            // reveal on the next painted frame, with a timeout backstop in case
+            // rAF is throttled or the tab is not visible
+            requestAnimationFrame(hideLoader);
+            setTimeout(hideLoader, 400);
+        };
+    </script>
+</body>
+</html>
