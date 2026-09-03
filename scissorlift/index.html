@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scissor Lift &mdash; Hydraulics and the Mechanical Advantage That Will Not Sit Still</title>
+    <!-- Local vendored assets - runs fully offline, no CDN required -->
+    <!-- Watch for a file that never turns up. A <script> or <link> that
+         fails to load does so silently: the page is simply left blank with
+         nothing said. Recording it here, before anything is asked for,
+         lets the check at the foot of the page name what is missing. -->
+    <script>
+        window.__deps = [];
+        addEventListener('error', function (e) {
+            var t = e.target, u = t && (t.src || t.href);
+            if (u && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) window.__deps.push(u);
+        }, true);
+    </script>
+    <script src="vendor/tailwind.js"></script>
+    <script src="vendor/three/three.min.js"></script>
+    <script src="vendor/three/OrbitControls.js"></script>
+    <link href="vendor/fontawesome.css" rel="stylesheet">
+    <link href="vendor/fonts.css" rel="stylesheet">
+    <link rel="stylesheet" href="app.css">
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none bg-slate-100">
+
+    <!-- Nothing moves until the warning has sounded. That is the order
+         a real machine does it in, and the reason is that people stand
+         near lifts: the beep is not decoration, it is the point. -->
+    <audio id="a-beep" src="vendor/audio/lift-start-beep.mp3" preload="auto"></audio>
+    <audio id="a-raise" src="vendor/audio/lift-raise.mp3" preload="auto" loop></audio>
+    <audio id="a-lower" src="vendor/audio/lift-lower.mp3" preload="auto" loop></audio>
+
+    <div id="loader">
+        <div class="ring"></div>
+        <p class="cap">Loading Scissor Lift&hellip;</p>
+    </div>
+
+    <header class="glass-panel sticky top-0 z-30 px-4 border-b border-slate-200 shrink-0">
+        <div class="w-full flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div>
+                    <h1 class="font-bold text-[calc(16px*var(--fs))] text-slate-800 flex items-center gap-2 leading-tight">
+                        Scissor Lift
+                    </h1>
+                    <p class="text-[calc(14px*var(--fs))] text-slate-500">Hydraulics, moments, and a mechanical advantage that will not sit still</p>
+                </div>
+            </div>
+
+            <div class="hidden sm:flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 text-[calc(16px*var(--fs))] text-slate-600">
+                <div title="How high the deck is off the ground.">Height: <span id="stat-h" class="text-sky-600 font-bold">0.60</span> m</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="What the two rams have to push with, between them, to hold this load at this height.">Ram force: <span id="stat-f" class="text-violet-600 font-bold">0</span> kN</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="The oil pressure that force needs. If it passes the relief setting the valve dumps the oil and the lift stops dead.">Pressure: <span id="stat-p" class="text-rose-600 font-bold">0</span> bar</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="How fast the deck is rising. It is not steady - the linkage sees to that.">Lift: <span id="stat-v" class="text-emerald-600 font-bold">0</span> mm/s</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="What the motor is drawing to do it.">Motor: <span id="stat-w" class="text-amber-600 font-bold">0.0</span> kW</div>
+            </div>
+        </div>
+    </header>
+
+    <main class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+
+        <div class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+
+            <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
+                <div id="view3d" class="absolute inset-0"></div>
+
+                <div id="nogl" class="hidden absolute inset-0 z-20 items-center justify-center p-8 text-center">
+                    <p class="text-[calc(14px*var(--fs))] text-slate-600 max-w-md">This browser could not start 3D graphics (WebGL), so the lift cannot be drawn. The readings and controls below still work.</p>
+                </div>
+
+                <!-- Said out loud when the lift will not move, because a
+                     machine standing still looks the same whatever the reason. -->
+                <div id="alarm" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md text-[calc(13px*var(--fs))] text-center max-w-lg">
+                    <b id="alarm-title"></b> <span id="alarm-body" class="opacity-90"></span>
+                </div>
+            </div>
+
+            <div class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col xl:flex-row gap-2">
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-start xl:w-[620px] shrink-0">
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-load" class="font-semibold text-slate-700" title="What is on the deck. The lift's own top weighs 420 kg before you put anything on it.">Load</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-load">600</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">kg</span></span>
+                        </div>
+                        <input id="s-load" type="range" min="0" max="2000" step="25" value="600" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0</span><span>m</span><span>2000</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-offset" class="font-semibold text-slate-700" title="How far the load sits from the middle of the deck. Push it far enough out and the whole lift wants to tip.">Load offset</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-offset">0</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
+                        </div>
+                        <input id="s-offset" type="range" min="-600" max="600" step="20" value="0" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>-600</span><span>x</span><span>+600</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-bore" class="font-semibold text-slate-700" title="How fat the rams are. Force is pressure times area, so a wider ram needs less pressure for the same push - and more oil to fill it.">Ram bore</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-bore">80</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
+                        </div>
+                        <input id="s-bore" type="range" min="50" max="130" step="5" value="80" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>50</span><span>&empty;</span><span>130</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-flow" class="font-semibold text-slate-700" title="How much oil the pump moves each minute. This, and only this, decides how fast the rams come out.">Pump flow</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-flow">8</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">L/min</span></span>
+                        </div>
+                        <input id="s-flow" type="range" min="2" max="20" step="1" value="8" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>2</span><span>Q</span><span>20</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-relief" class="font-semibold text-slate-700" title="The pressure at which the relief valve gives up and dumps the oil back to tank. It is what stops the machine tearing itself apart.">Relief valve</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-relief">250</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">bar</span></span>
+                        </div>
+                        <input id="s-relief" type="range" min="80" max="350" step="10" value="250" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>80</span><span>p</span><span>350</span></div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center justify-center xl:justify-start gap-2 flex-1 min-w-0">
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center">View</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="vseg on px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="whole">Whole</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="scissor" title="The linkage on its own - where the mechanical advantage comes from.">Scissor</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="ram" title="The rams, and how little of their travel makes all that height.">Ram</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="pack" title="Motor, pump and tank.">Power pack</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="wheel">Wheel</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="deck">Deck</button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-center flex-wrap gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <button id="btn-up" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-700 text-white border-slate-900 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-arrow-up"></i><span>Raise</span>
+                        </button>
+                        <button id="btn-down" class="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-arrow-down"></i><span>Lower</span>
+                        </button>
+                        <button id="btn-stop" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-pause"></i><span>Hold</span>
+                        </button>
+                        <button id="btn-reset" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-rotate-left"></i><span>Reset</span>
+                        </button>
+
+                        <span class="w-px h-5 bg-slate-200"></span>
+
+                        <label id="chip-crate" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Draw the load on the deck.">
+                            <input id="chk-crate" type="checkbox" class="accent-slate-900" checked><span>Load</span>
+                        </label>
+                        <label id="chip-forces" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Draw the ram force and the weight as arrows, to the same scale.">
+                            <input id="chk-forces" type="checkbox" class="accent-slate-900" checked><span>Forces</span>
+                        </label>
+                        <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="The warning before it moves, then the pump on the way up and the oil on the way down.">
+                            <input id="chk-sound" type="checkbox" class="accent-slate-900" checked><span>Sound</span>
+                        </label>
+                        <label id="chip-mesh" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show mesh: draw every surface as the triangles it is really made of.">
+                            <input id="chk-mesh" type="checkbox" class="accent-slate-900"><span>Mesh</span>
+                        </label>
+                        <label id="chip-spin" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none">
+                            <input id="chk-spin" type="checkbox" class="accent-slate-900"><span>Spin</span>
+                        </label>
+                        <label id="chip-view-mode" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Dark: put the machine on a dark ground.">
+                            <input id="chk-view-mode" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer" checked><span><span id="txt-view-mode">Light</span></span>
+                        </label>
+                        <button id="btn-info" class="p-2 w-9 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition" title="Learning outcomes and the physics" aria-label="Learning outcomes">
+                            <i class="fa-solid fa-circle-info"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+    <!-- Explainer modal -->
+    <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div id="info-backdrop" class="absolute inset-0 bg-slate-900/50"></div>
+        <div class="relative w-full max-w-2xl max-h-[86vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div class="shrink-0 border-b border-slate-200 px-5 py-3 flex items-start justify-between gap-4">
+                <div>
+                    <h2 class="text-[18px] font-bold text-slate-800">Scissor Lift &mdash; Hydraulics and the Mechanical Advantage That Will Not Sit Still</h2>
+                    <p class="text-[14px] text-slate-500">Grades 8&ndash;10 &middot; Pressure, moments, mechanical advantage, work and power, and stability</p>
+                </div>
+                <button id="info-close" aria-label="Close"
+                        class="shrink-0 w-7 h-7 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition text-[24px] leading-none">&times;</button>
+            </div>
+
+            <div class="overflow-y-auto px-5 py-4 text-[16px] text-slate-700 leading-relaxed space-y-4">
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">1. Pressure, and why oil can lift a car</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Pressure</b> is force spread over area: <span class="mono">p = F / A</span>, measured in pascals. One bar is 100&nbsp;000&nbsp;Pa, near enough the pressure of the atmosphere.</li>
+                        <li>A liquid cannot be squashed, and <b>Pascal&rsquo;s principle</b> says the pressure you put into it is felt <i>everywhere in it at once</i>. So a small pump piston pushing hard on a little area raises the pressure of the whole system &mdash; and that same pressure then pushes on the <b>big</b> area of the ram.</li>
+                        <li>Rearrange it: <span class="mono">F = p &times; A</span>. Double the ram&rsquo;s diameter and you <b>quadruple</b> its area, because area goes as the square of the radius. Try the bore slider and watch the pressure needed collapse.</li>
+                        <li>There is no free lunch in it. The big ram moves proportionally less far than the little pump piston, so the <b>work</b> going in and the work coming out are the same. Hydraulics is a lever made of oil.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">2. The scissor: a mechanical advantage that keeps changing</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>Here is the thing that makes a scissor lift worth studying. Its mechanical advantage is not a number you can look up &mdash; it <b>changes all the way up the lift</b>, and it changes enormously.</li>
+                        <li>Watch the ram force as you raise it from the bottom. Near the floor the arms are almost flat, and holding the deck up takes something like <b>twenty times</b> the weight on it. By the top it is nearer twice. Same lift, same load, same rams.</li>
+                        <li>Why? Because at a shallow angle the ram is pushing almost <i>along</i> the arm rather than across it, and almost none of its push turns into a turning effect about the pivot. The useful part of a force is the part at right angles to the arm.</li>
+                        <li>Now watch the <b>speed</b> at the same time. It bolts away from the floor and then crawls near the top. That is not a coincidence, and it is not the pump changing: it is the same trade, read the other way round.</li>
+                        <li>Work it out with <b>work</b>. The ram does <span class="mono">F &times; s</span> and the load gains <span class="mono">W &times; h</span>, and those must be equal, so
+                            <span class="mono">F/W = h/s</span>. If the force ratio is twenty, then one millimetre of ram must be buying twenty millimetres of height. <b>High force ratio and high speed ratio are the same fact.</b></li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">3. Moments: why it is hardest at the bottom</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The <b>moment</b>, or turning effect, of a force about a pivot is <span class="mono">&tau; = F &times; d</span>, where <span class="mono">d</span> is the perpendicular distance from the pivot to the line of the force.</li>
+                        <li>That word <i>perpendicular</i> is the whole story. With the arms nearly flat the ram&rsquo;s line of push passes very close to the pivot, so <span class="mono">d</span> is tiny and even a huge force produces almost no turning.</li>
+                        <li>It is the same reason you push a door at the handle and not at the hinge, and the same reason a spanner works better when it is long.</li>
+                        <li>This is why real scissor lifts stall on the floor and not in the air, and why they are built with the rams as steep as the frame will allow.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">4. Work, energy and power</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>Lifting a load stores <b>gravitational potential energy</b>: <span class="mono">E<sub>p</sub> = mgh</span>. Put 1000 kg up 1.4 m and you have banked about 13.7 kJ &mdash; and you get it back on the way down, which is why lowering needs no pump at all, only a valve let open.</li>
+                        <li><b>Power</b> is the rate of doing work, <span class="mono">P = W/t</span>, in watts. For a hydraulic system it comes out as <span class="mono">P = p &times; Q</span> &mdash; pressure times flow. High pressure and a trickle, or low pressure and a torrent, can be the same power.</li>
+                        <li>The pump&rsquo;s <b>flow</b> is the only thing that sets ram speed: the oil has to go somewhere, and the ram is the only place it can go. Change the load and the pressure changes; the speed does not.</li>
+                        <li>Nothing is free: bearings rub and oil is forced through pipes, so the motor always draws more than the load receives. That ratio is the <b>efficiency</b>.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">5. Standing up: stability and tipping</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>A thing stays put while its <b>centre of gravity</b> is over its base. Push the load out to the edge of the deck and the weight&rsquo;s line of action walks towards the wheels.</li>
+                        <li>Compare two moments about the tipping wheel: the load trying to turn it over, and the machine&rsquo;s own weight holding it down. When the first beats the second, it goes.</li>
+                        <li>Height makes it worse, and the model shows why: the higher the deck, the further a small push at the top can shift things, and a wheeled base is a poor anchor. This is why real lifts are chocked, and why load charts get stricter with height.</li>
+                        <li>The <b>wheels</b> under this one are for moving it between jobs, not for working on. Put the load right out to 600 mm and watch what the read-out says.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">6. Try this</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Find the hard part.</b> Load it to 1500 kg and raise it from flat. Watch the pressure gauge as it climbs. Where is the pressure worst &mdash; and is that where you expected?</li>
+                        <li><b>Stall it, then cheat.</b> Turn the relief valve down to 120 bar and try to lift 2000 kg off the floor. It will not go. Now raise the lift halfway by hand (lower the load, lift, put the load back) and try again from there. Why does the same lift now manage the same weight?</li>
+                        <li><b>Prove the bargain.</b> Note the ram force and the lift speed near the bottom, then again near the top. Multiply each force by its speed. Why do the two answers come out so close?</li>
+                        <li><b>Area beats effort.</b> Leave everything alone and take the bore from 50 mm to 130 mm. Predict what happens to the pressure before you look &mdash; is it halved, or something else? Then explain what happened to the speed.</li>
+                        <li><b>Power, not force.</b> Double the pump flow and watch the motor power. Then double the load instead. Which one costs the motor more, and why?</li>
+                        <li><b>Tip it.</b> Put 2000 kg at 600 mm off centre and raise it. Read the tipping margin. What could you change &mdash; other than the load &mdash; to make it safe?</li>
+                    </ul>
+                </section>
+
+                <details class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <summary class="cursor-pointer font-bold text-slate-800">Physics behind the simulation</summary>
+                    <div class="pt-2 space-y-3">
+                        <div>
+                            <p class="mono text-slate-900">p = F / A, &nbsp; A = &pi;d&sup2;/4</p>
+                            <p class="text-slate-500">Pressure and ram area. Bore is a diameter, so the area goes as its square.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">h = 2L sin&theta;</p>
+                            <p class="text-slate-500">Deck height for a two-stage scissor of arm length L at half-angle &theta;.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">s = &radic;(p&sup2; + q&sup2; &minus; 2pq cos&theta;)</p>
+                            <p class="text-slate-500">Ram length, straight from the cosine rule on the mounting triangle.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">F &times; &delta;s = W &times; &delta;h &nbsp;&rarr;&nbsp; F/W = (dh/d&theta;) / (ds/d&theta;)</p>
+                            <p class="text-slate-500">Virtual work. The whole mechanical advantage falls out of this one line, with no need to resolve a single force.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">F/W = 2L cos&theta; &middot; s / (p q sin&theta;)</p>
+                            <p class="text-slate-500">What that comes to here. As &theta; &rarr; 0 it goes to infinity, which is the flat-on-the-floor problem.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">v<sub>ram</sub> = Q / (n A), &nbsp; v<sub>deck</sub> = v<sub>ram</sub> &times; (F/W)</p>
+                            <p class="text-slate-500">Flow sets ram speed; the linkage ratio turns it into deck speed.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">P = p &times; Q, &nbsp; P<sub>motor</sub> = P / &eta;</p>
+                            <p class="text-slate-500">Hydraulic power, and what the motor has to draw to supply it.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">&tau;<sub>tip</sub> = m g x, &nbsp; &tau;<sub>hold</sub> = M g b</p>
+                            <p class="text-slate-500">Overturning against restoring, taken about the wheel on the tipping side.</p>
+                        </div>
+
+                        <div class="border-t border-slate-200 pt-2">
+                            <p class="font-bold text-slate-800 mb-1">Assumptions, and what is left out</p>
+                            <ul class="list-disc pl-5 space-y-1 text-slate-500">
+                                <li>The arms are treated as weightless in the force balance, and only the deck and its load are counted. Real scissor arms are heavy, and near the bottom their own weight matters.</li>
+                                <li>The linkage is frictionless. In a real machine the pin joints and the roller take a real bite out of the ram&rsquo;s effort, worst of all where the loads are highest.</li>
+                                <li>The pump is treated as delivering a steady flow whatever the pressure, up to the relief setting, where it dumps everything. A real pump slips more as pressure rises.</li>
+                                <li>Oil is taken as incompressible and the hoses as rigid. Neither is quite true, and it is why a real lift sinks a little when you first load it.</li>
+                                <li>Lowering is a controlled leak-down at a fixed rate rather than a proper flow calculation through the valve.</li>
+                                <li>The tipping check is a static one about the wheel line. It says nothing about a lift being pushed, or standing on a slope, or being shock-loaded - all of which are what actually turns them over.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </details>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        // app.js clears the loading veil itself once it has something to
+        // show. This only steps in when a dependency never arrived, and it
+        // styles itself inline on purpose - app.css may be the missing file.
+        (function () {
+            function check() {
+                if (!window.__deps.length) return;
+                var seen = {}, list = [];
+                window.__deps.forEach(function (u) {
+                    var n = u.split('/').slice(-2).join('/');
+                    if (!seen[n]) { seen[n] = 1; list.push(n); }
+                });
+                var veil = document.getElementById('loader');
+                if (veil) veil.style.display = 'none';
+                var d = document.createElement('div');
+                d.setAttribute('style', 'position:fixed;inset:0;z-index:99999;display:flex;' +
+                    'align-items:center;justify-content:center;padding:32px;background:#f1f5f9;' +
+                    'color:#0f172a;text-align:center;font:14px/1.7 -apple-system,' +
+                    'BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif');
+                d.innerHTML = '<div><p style="font-weight:700;margin:0 0 8px">' +
+                    'This page could not load everything it needs.</p>' +
+                    '<p style="margin:0;color:#475569">Missing: ' + list.join(', ') + '</p>' +
+                    '<p style="margin:12px 0 0;color:#475569">Keep index.html, app.css, app.js ' +
+                    'and the vendor folder together in the same directory.</p></div>';
+                document.body.appendChild(d);
+            }
+            if (document.readyState === 'complete') check();
+            else addEventListener('load', check);
+        })();
+    </script>
+</body>
+</html>
