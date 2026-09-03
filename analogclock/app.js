@@ -46,7 +46,32 @@ const STOP_ARC = 0.9;                 // below this the escapement will not unlo
 // The mainspring is left permanently wound: the fusee is doing
 // its job, so how far down it is makes no difference to the rate.
 const WIND = 0.7;
-const DEFAULTS = { len: NOM_LEN, drive: 100 };
+// How far apart the exploded view draws the wheels: at 100% every part
+// stands nearly twice its own distance out from the centre arbor, which
+// clears the overlaps without throwing anything off the screen.
+const EXPLODE_MAX = 0.9;
+// The dial, the hands and the stand sit on the centre line, so a radial
+// push leaves them exactly where they were. They come apart along the
+// axis instead - which is the direction they were assembled from anyway:
+// the dial goes on the front of the movement, the hands go on after it,
+// and the whole thing drops onto its stand last.
+const EXPLODE_DIAL  = 95;             // the dial, out towards the viewer
+const EXPLODE_HANDS = 2.4;            // and the hands spread further again
+const EXPLODE_STAND = 210;            // the movement lifts off its stand
+// The frame ring and the pendulum are the two things that read as clutter
+// once the wheels are drawn out - the ring because it circles everything,
+// the pendulum because it hangs straight down through the middle of it.
+// Both go well back, clear of what you are trying to look at.
+const EXPLODE_FRAME  = 900;           // the frame, right off the back
+const EXPLODE_PEND_Y = 240;           // and the pendulum, down
+const EXPLODE_PEND_Z = 900;           // and just as far behind
+// The hammer runs at the same depth as the wheels, so the moment they
+// spread it passes straight through them. Bell, standard and hammer are
+// bolted to one another, so they go back as one piece - separating them
+// from each other would say something untrue about how they work.
+const EXPLODE_STRIKE_Z = 340;
+const EXPLODE_STRIKE_Y = 50;
+const DEFAULTS = { len: NOM_LEN, drive: 100, explode: 0 };
 const P = Object.assign({}, DEFAULTS);
 
 const state = {
@@ -59,7 +84,10 @@ const state = {
     // 'clock' as it stands, 'movement' with the dial off, or
     // 'mech' with everything that is not a working part taken away.
     show: 'clock',
-    sound: true, mesh: false, turntable: false,
+    // The tick is not an event, it is a condition - it runs for as long
+    // as the clock does. So it starts off and waits to be asked for.
+    sound: false, mesh: false, turntable: false,
+    lastBeat: null,                    // which beat the tick last fired on
     viewMode: 'blueprint',
     vphase: 0,                         // the pendulum as drawn, which may be slowed
     strike: null,                      // { left, phase, hour } while striking
@@ -191,13 +219,16 @@ const Z_SEC = 2;
 let scene, camera, renderer, controls;
 let floor3, grid3;
 let clockGrp, dialGrp, faceMesh, bezelGrp, standGrp;
+let frameGrp = null, frameHomeZ = 0;
+let standHome = null, pendHome = null;
 let escWheel, anchorGrp, crutchGrp, pendGrp, rodBrass, bobGrp;
 let handH, handM, handS;
 let wGreat, wCentre, wThird, wCannon, wMinute, wHour;
 let secDrive, secIdler, secCentre;
 let fuseeGrp, barrelGrp, chainMesh = null, chainGrpHost = null;
 let wGreat2, fuseeGrp2, barrelGrp2, chain2Mesh = null;
-let pinWheel, flyGrp, hammerGrp, bellMesh;
+let pinWheel, flyGrp, hammerGrp, bellMesh, bellStand;
+let strikeHomes = [];
 let gl = false;
 const MAT = {};
 
@@ -760,6 +791,73 @@ function init3D() {
     MAT.wood.envMapIntensity = 0.55;
 
     buildClock();
+
+    // Remember where every part belongs, so the explode has something to
+    // measure out from and something to come home to.
+    clockGrp.children.forEach(o => {
+        if (!o.userData.fixed) o.userData.home = o.position.clone();
+    });
+    // The hands stack in front of the dial and spread apart from it; the
+    // bezel is part of the dial itself, so it is left out of that and
+    // simply travels with the face. Its own z is zero - the depth lives on
+    // its children - so spreading it would have driven it backwards.
+    dialGrp.children.forEach(o => {
+        if (o !== bezelGrp) o.userData.homeZ = o.position.z;
+    });
+    standHome = standGrp.position.clone();
+    pendHome = pendGrp.position.clone();
+    frameHomeZ = frameGrp.position.z;
+    strikeHomes = [bellMesh, bellStand, hammerGrp].map(o => ({ o: o, p: o.position.clone() }));
+}
+
+// Where a part stands once the view is exploded. Everything is pushed
+// straight out from the centre arbor - the axis the whole movement is
+// built around - so the wheels separate without any of them changing
+// places, and the picture stays the picture you already know.
+function exploded(p) {
+    const k = 1 + (P.explode / 100) * EXPLODE_MAX;
+    return { x: p.x * k, y: p.y * k };
+}
+
+// Parts standing on the centre line have nowhere to go, and stay. That is
+// right: the centre arbor is the thing everything else moves away from.
+function applyExplode() {
+    if (!gl) return;
+    const e = P.explode / 100;
+
+    clockGrp.children.forEach(o => {
+        const home = o.userData.home;
+        if (!home) return;
+        const p = exploded({ x: home.x, y: home.y - DIAL_Y });
+        o.position.set(p.x, DIAL_Y + p.y, home.z);
+    });
+
+    // Then the axial parts, after the pass above has put their z back.
+    if (dialGrp) {
+        dialGrp.position.z = e * EXPLODE_DIAL;
+        dialGrp.children.forEach(o => {
+            if (o.userData.homeZ === undefined) return;
+            o.position.z = Z_DIAL + (o.userData.homeZ - Z_DIAL) * (1 + e * (EXPLODE_HANDS - 1));
+        });
+    }
+    if (frameGrp) {
+        frameGrp.position.z = frameHomeZ - e * EXPLODE_FRAME;
+        // Distance alone does not get the ring out of the way - it still
+        // draws a circle round everything you are trying to read. Thinning
+        // it down does, and it stays there as the thing the pivots run in.
+        MAT.frame.transparent = e > 0.01;
+        MAT.frame.opacity = 1 - e * 0.72;
+        MAT.frame.depthWrite = e <= 0.01;
+    }
+    strikeHomes.forEach(s => s.o.position.set(
+        s.p.x, s.p.y + e * EXPLODE_STRIKE_Y, s.p.z - e * EXPLODE_STRIKE_Z));
+    if (standGrp && standHome) standGrp.position.y = standHome.y - e * EXPLODE_STAND;
+    if (pendGrp && pendHome) {
+        pendGrp.position.y = pendHome.y - e * EXPLODE_PEND_Y;
+        pendGrp.position.z = pendHome.z - e * EXPLODE_PEND_Z;
+    }
+
+    rebuildChains(true);              // a chain has to follow its own fusee
 }
 
 // Drop something laid out in plate coordinates into the world.
@@ -776,7 +874,8 @@ function buildClock() {
     clockGrp = new THREE.Group();
     scene.add(clockGrp);
     buildStand();
-    clockGrp.add(buildFrame(BACK_Z));
+    frameGrp = buildFrame(BACK_Z);
+    clockGrp.add(frameGrp);
     buildTrain();
     buildFusees();
     buildStrike();
@@ -792,6 +891,7 @@ function buildClock() {
 // is not, so the eye separates the clock from what holds it up.
 function buildStand() {
     const g = standGrp = new THREE.Group();
+    g.userData.fixed = true;          // the stand is not part of the mechanism
     const Z = STAND_Z + 10;
     // The foot is centred under the CLOCK, not under the rod, or
     // the whole thing looks as though it is about to fall forwards.
@@ -1115,8 +1215,8 @@ function rebuildChains(force) {
     if (!force && Math.abs(w - lastChainW) < 0.006) return;
     lastChainW = w;
     [chainMesh, chain2Mesh].forEach(m => { if (m) { chainGrpHost.remove(m); m.geometry.dispose(); } });
-    chainMesh = makeChain(A_G, A_B, w);
-    chain2Mesh = makeChain(A_G2, A_B2, w);
+    chainMesh = makeChain(exploded(A_G), exploded(A_B), w);
+    chain2Mesh = makeChain(exploded(A_G2), exploded(A_B2), w);
     chainGrpHost.add(chainMesh); chainGrpHost.add(chain2Mesh);
 }
 
@@ -1186,9 +1286,11 @@ function buildStrike() {
     bellMesh.rotation.z = Math.PI;      // hang it crown up
     place(bellMesh, BELL_P, -60);
     bellMesh.castShadow = true;
+    bellMesh.userData.fixed = true;
     clockGrp.add(bellMesh);
-    const std = new THREE.Mesh(new THREE.CylinderGeometry(6, 8, 176, 14), MAT.brass);
+    const std = bellStand = new THREE.Mesh(new THREE.CylinderGeometry(6, 8, 176, 14), MAT.brass);
     place(std, { x: BELL_P.x, y: BELL_P.y - 86 }, -60);
+    std.userData.fixed = true;
     clockGrp.add(std);
 
     hammerGrp = new THREE.Group();
@@ -1205,6 +1307,7 @@ function buildStrike() {
         { depth: 5, bevelEnabled: false }), MAT.steelDark);
     hammerGrp.add(tail);
     place(hammerGrp, A_HAM, Z_CENTRE + 14);
+    hammerGrp.userData.fixed = true;      // it has to stay under its bell
     clockGrp.add(hammerGrp);
 }
 
@@ -1457,6 +1560,7 @@ function buildPendulum() {
     pendGrp.add(bobGrp);
 
     pendGrp.position.set(0, DIAL_Y + SUSP_Y, PEND_Z);
+    pendGrp.userData.fixed = true;
     clockGrp.add(pendGrp);
 
     // The back cock: a bracket standing up off the frame and
@@ -1465,10 +1569,12 @@ function buildPendulum() {
     const post = new THREE.Mesh(roundedBox(30, SUSP_Y - 308, 14, 4), MAT.frame);
     post.position.set(0, DIAL_Y + (316 + SUSP_Y) / 2, BACK_Z + 5);
     post.castShadow = true;
+    post.userData.fixed = true;
     clockGrp.add(post);
     const shelf = new THREE.Mesh(roundedBox(56, 16, PEND_Z - BACK_Z - 22, 4), MAT.frame);
     shelf.position.set(0, DIAL_Y + SUSP_Y + 6, (BACK_Z + PEND_Z) / 2 - 5);
     shelf.castShadow = true;
+    shelf.userData.fixed = true;
     clockGrp.add(shelf);
 
     layoutPendulum();
@@ -1599,7 +1705,10 @@ function update3D() {
     faceMesh.visible = m === 'clock';
     bezelGrp.visible = m !== 'mech';
     standGrp.visible = m !== 'mech';
-    floor3.visible = grid3.visible = m !== 'mech';
+    // The ground goes as soon as anything is drawn apart: the stand has to
+    // be able to fall away from the movement, and it cannot do that
+    // through a floor.
+    floor3.visible = grid3.visible = m !== 'mech' && P.explode < 1;
 
     controls.update();
     renderer.render(scene, camera);
@@ -1679,37 +1788,57 @@ function updateStats() {
 // =============================================================
 //  Sound
 // =============================================================
-// The ticking runs as a loop for as long as the escapement is
-// actually letting teeth go, and its volume follows the arc - so
-// a clock on a weak spring is quieter, and a stopped one is
-// silent. Above a minute a second there is nothing to hear that
-// would mean anything, so it stops.
-let aTick = null, aBell = null;
-function initAudio() { aTick = $('a-tick'); aBell = $('a-bell'); }
+// The recording is a continuous tick at almost exactly one a second, with
+// its first transient 45 ms in. Looped, it keeps its own time and walks
+// away from the pendulum; so instead one tick is cut out of it and fired
+// on the beat. Measured off the file itself:
+//
+//   onsets  0.0449  1.0426  2.0454  3.0431  4.0458 ... s
+//
+const TICK_AT = 0.035;                // just before the attack, so it is whole
+const TICK_MS = 300;                  // the tick and its decay, and nothing after
+const TICK_VOICES = 3;                // one element cannot restart every beat
+let tickPool = [], tickNext = 0, tickAlt = 0;
+let aBell = null;
 
-function soundUpdate() {
-    if (!aTick) return;
-    const want = state.sound && state.running && willRun()
-              && state.mult <= 60 && state.arc > 0.5;
-    if (want) {
-        aTick.volume = clamp(state.arc / NOM_ARC, 0.15, 1) * 0.55;
-        // A longer pendulum beats slower, and so does the tick.
-        // The difference is under a percent, which is exactly the
-        // point: the ear cannot hear what the read-out can measure.
-        aTick.playbackRate = clamp(clockRate(), 0.5, 2);
-        if (aTick.paused) aTick.play().catch(() => {});
-    } else if (!aTick.paused) {
-        try { aTick.pause(); } catch (e) {}
-    }
+function initAudio() {
+    aBell = $('a-bell');
+    const src = $('a-tick');
+    if (!src) return;
+    tickPool = [src];
+    for (let i = 1; i < TICK_VOICES; i++) tickPool.push(src.cloneNode());
+    tickPool.forEach(a => { a.preload = 'auto'; try { a.currentTime = TICK_AT; } catch (e) {} });
 }
+
+// Fired the instant the drawn pendulum crosses the middle of its swing -
+// which is where the tooth drops, and so where a clock makes its noise.
+function tickSound() {
+    if (!state.sound || !tickPool.length) return;
+    const a = tickPool[tickNext];
+    tickNext = (tickNext + 1) % tickPool.length;
+    // Tick and tock are not one sound heard twice: they come off opposite
+    // pallets. A few percent of pitch is enough to hear the difference.
+    a.playbackRate = (tickAlt ^= 1) ? 1 : 0.94;
+    a.volume = clamp(state.arc / NOM_ARC, 0.15, 1) * 0.7;
+    try { a.currentTime = TICK_AT; } catch (e) {}
+    a.play().catch(() => {});
+    clearTimeout(a._stop);
+    a._stop = setTimeout(function () {
+        try { a.pause(); a.currentTime = TICK_AT; } catch (e) {}
+    }, TICK_MS);
+}
+
 function bellSound() {
     if (!aBell || !state.sound || state.mult > 60) return;
     try { aBell.currentTime = 0; } catch (e) {}
     aBell.volume = 0.85;
     aBell.play().catch(() => {});
 }
+
 function soundStop() {
-    [aTick, aBell].forEach(a => { if (a) { try { a.pause(); } catch (e) {} } });
+    tickPool.forEach(a => { clearTimeout(a._stop); try { a.pause(); } catch (e) {} });
+    if (aBell) { try { aBell.pause(); } catch (e) {} }
+    state.lastBeat = null;
 }
 
 // =============================================================
@@ -1737,7 +1866,23 @@ function frame(now) {
         state.vphase += real * 3.0;
     }
 
-    soundUpdate();
+    // The tick belongs to the beat. state.vphase is the pendulum as it is
+    // actually drawn - slowed at the high time multipliers - so the sound
+    // always lands on the swing you can see.
+    if (state.sound && state.mult <= 60 && state.running
+            && willRun() && state.arc > 0.5) {
+        const b = Math.floor(state.vphase + 0.5);
+        if (b !== state.lastBeat) {
+            // Switching the sound on mid-swing must not fire a tick there
+            // and then: the first beat only marks where we came in, and
+            // the ticking starts at the next crossing.
+            if (state.lastBeat !== null) tickSound();
+            state.lastBeat = b;
+        }
+    } else {
+        state.lastBeat = null;
+    }
+
     updateStats();
     update3D();
     requestAnimationFrame(frame);
@@ -1764,10 +1909,11 @@ function reset() {
     soundStop();
     setToTime();
     state.vphase = state.beats;
-    ['len', 'drive'].forEach(k => { $('s-' + k).value = P[k]; });
+    ['len', 'drive', 'explode'].forEach(k => { $('s-' + k).value = P[k]; });
     $('v-len').textContent = P.len.toFixed(2);
     $('v-drive').textContent = P.drive;
-    if (gl) { layoutPendulum(); rebuildChains(true); }
+    $('v-explode').textContent = P.explode;
+    if (gl) { layoutPendulum(); applyExplode(); }
     paintEsc(); paintShow(); paintRun();
 }
 function bindSlider(id, key, fmt, after) {
@@ -1780,6 +1926,7 @@ function bindSlider(id, key, fmt, after) {
 }
 bindSlider('s-len', 'len', v => v.toFixed(2), () => { if (gl) layoutPendulum(); });
 bindSlider('s-drive', 'drive', v => v.toFixed(0));
+bindSlider('s-explode', 'explode', v => v.toFixed(0), applyExplode);
 
 function paintRun() {
     const on = state.running;

@@ -30,9 +30,11 @@
         <p class="cap">Loading Analog Clock&hellip;</p>
     </div>
 
-    <!-- The escapement, which runs as long as the clock does, and the
-         bell, started once at the head of each hour. -->
-    <audio id="a-tick" src="vendor/audio/clock-ticking.mp3" preload="auto" loop></audio>
+    <!-- The escapement and the bell. The ticking recording is not looped:
+         one tick is cut out of it and fired on each beat, so what you hear
+         is the escapement you are watching rather than a second clock
+         running alongside it at its own rate. -->
+    <audio id="a-tick" src="vendor/audio/clock-ticking.mp3" preload="auto"></audio>
     <audio id="a-bell" src="vendor/audio/clock-bell.mp3" preload="auto"></audio>
 
     <header class="glass-panel sticky top-0 z-30 px-4 border-b border-slate-200 shrink-0">
@@ -84,6 +86,14 @@
                         </div>
                         <input id="s-len" type="range" min="984" max="1004" step="0.02" value="993.62" class="w-full">
                         <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>984 fast</span><span id="v-turns">0.0 turns</span><span>1004 slow</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-explode" class="font-semibold text-slate-700" title="Draw the wheels out from the middle so nothing hides behind anything else. The clock keeps running the whole time.">Explode</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-explode">0</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">%</span></span>
+                        </div>
+                        <input id="s-explode" type="range" min="0" max="100" step="1" value="0" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0 together</span><span>&harr;</span><span>100 apart</span></div>
                     </div>
                     <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
                         <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
@@ -149,8 +159,8 @@
 
                         <span class="w-px h-5 bg-slate-200"></span>
 
-                        <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Tick, tock, and the bell on the hour.">
-                            <input id="chk-sound" type="checkbox" class="accent-slate-900" checked><span>Sound</span>
+                        <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Tick, tock, and the bell on the hour. Off to begin with: the escapement never stops, so this is left to you to ask for.">
+                            <input id="chk-sound" type="checkbox" class="accent-slate-900"><span>Sound</span>
                         </label>
                         <label id="chip-mesh" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show mesh: draw every surface as the triangles it is really made of.">
                             <input id="chk-mesh" type="checkbox" class="accent-slate-900"><span>Mesh</span>
