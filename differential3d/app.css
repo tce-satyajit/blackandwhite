@@ -1,0 +1,129 @@
+/* ---- Text size in the HTML chrome -------------------------
+   Header, sliders, chips, panels and modal all size themselves
+   off --fs. Change this one number to scale the whole interface.
+   Canvas labels are separate: see FS in the script. */
+:root { --fs: 1.15; }
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #f1f5f9;
+    color: #0f172a;
+    overflow-x: hidden;
+}
+
+.mono {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+canvas {
+    touch-action: none;
+}
+
+/* Custom light scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #e2e8f0;
+}
+::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+}
+
+/* Range slider styling for Light Theme */
+/* Track and thumb follow the same neutral palette as the pill buttons:
+   light grey rail, dark slate thumb ringed in white. */
+input[type=range] {
+    -webkit-appearance: none;
+    background: #e5e7eb;
+    height: 6px;
+    border-radius: 999px;
+}
+input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 18px;
+    width: 18px;
+    border-radius: 50%;
+    background: #0f172a;
+    border: 2px solid #ffffff;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(15, 23, 42, 0.25);
+    transition: transform 0.1s ease, background-color 0.2s ease;
+}
+input[type=range]::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    background: #334155;
+}
+input[type=range]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 1px #e5e7eb, 0 0 0 4px rgba(15, 23, 42, 0.18);
+}
+
+/* Header readings change every frame. Without a fixed cell the row
+   re-flows on every digit change and the whole bar twitches, so each
+   number gets a reserved right-aligned slot in tabular figures. */
+.stat-num {
+    display: inline-block;
+    min-width: 4ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+
+/* ---- Loading veil -------------------------------------------
+   Vendored Tailwind, the fonts and (in the 3D build) three.js all have
+   to arrive before the page means anything. This covers the half-built
+   layout until the simulation has actually started. */
+#loader {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    background: #f1f5f9;
+    transition: opacity .35s ease, visibility .35s ease;
+}
+/* pointer-events goes the instant the class lands, so a throttled or
+   interrupted transition can never leave the veil swallowing clicks */
+#loader.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+#loader .ring {
+    width: 38px; height: 38px; border-radius: 50%;
+    border: 3px solid #cbd5e1; border-top-color: #0f172a;
+    animation: loaderspin .8s linear infinite;
+}
+#loader .cap {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px; font-weight: 600; letter-spacing: .02em; color: #64748b;
+}
+@keyframes loaderspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    #loader .ring { animation-duration: 2.4s; }
+}
+
+.glass-panel {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Panels overlaid on the simulation follow the dark view too */
+.cam.on {
+    background: #0f172a;
+    color: #ffffff;
+    border-color: #0f172a;
+}
+
+.sim-note.dark {
+    background: rgba(15, 23, 42, .92);
+    border-color: #334155;
+    color: #cbd5e1;
+}
+.sim-note.dark b, .sim-note.dark .hd { color: #f1f5f9; }
+/* Children set their own colour with a utility class, so inheriting from
+   .sim-note.dark never reaches them — slate-900 text then sits on a
+   slate-900 panel and vanishes. Restate each one for the dark panel. */
+.sim-note.dark .text-slate-900 { color: #f1f5f9; }
+.sim-note.dark .text-slate-700 { color: #cbd5e1; }
+.sim-note.dark .text-slate-500 { color: #94a3b8; }

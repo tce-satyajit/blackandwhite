@@ -1,0 +1,2748 @@
+// =============================================================
+//  Centre Lathe
+// =============================================================
+// The whole simulation turns on one fact that a drilling machine can
+// never show you: on a lathe the DIAMETER is the thing being changed,
+// and the cutting speed depends on it. So the speed the edge sees is
+// not a setting — it is a consequence, and it moves while you work.
+//
+// Everything is in millimetres, revs per minute and newtons: the units
+// off a workshop chart, so the readings are the ones a machinist reads.
+
+const MOTOR_W = 550;                  // a bench centre lathe
+const DRIVE_EFF = 0.90;               // what survives the gears and belt
+
+// The headstock gear positions. A lathe has no continuous speed
+// control: you get these and nothing in between, which is exactly why
+// "the right speed" is usually a compromise.
+const SPEEDS = [70, 130, 240, 430, 800, 1400];
+
+// Specific cutting force, in newtons per square millimetre of chip,
+// and the speed a high-speed-steel edge survives in that material.
+const MATS = {
+    // `skin` is what the bar looks like BEFORE the tool has been near it:
+    // dull, oxidised, and on hot-rolled steel almost black with mill
+    // scale. Everywhere the tool has cut comes up bright, which is how
+    // you can see at a glance exactly how far along the work has got.
+    alu:   { name: 'Aluminium',  kc: 600,  vc: 120, hex: 0xc9ced6, chip: 0xdfe3e8, rough: 0.34, metal: 0.72,
+             skin: [0.60, 0.61, 0.62] },
+    brass: { name: 'Brass',      kc: 900,  vc: 70,  hex: 0xb9993f, chip: 0xd6b657, rough: 0.30, metal: 0.78,
+             skin: [0.52, 0.46, 0.34] },
+    steel: { name: 'Mild Steel', kc: 1900, vc: 30,  hex: 0x8b939e, chip: 0x6f7783, rough: 0.42, metal: 0.62,
+             skin: [0.34, 0.33, 0.32] }
+};
+
+const DEFAULTS = { feed: 0.25, depth: 1.0, dia: 50 };
+const P = Object.assign({}, DEFAULTS);
+
+const state = {
+    // aluminium at 800 rpm is a well-set-up cut: 126 m/min against a
+    // wanted 120, and 314 W of the 495 available. Somewhere to start.
+    mat: 'alu', speed: 4, op: 'turn', spinView: 'eased',
+    running: false, done: false,
+    power: false,                     // off until someone starts it
+    spin: 0,                          // spindle angle, radians (true)
+    spinShown: 0,                     // and the angle actually drawn
+    spinRpm: 0,                       // what it is really doing
+    stalled: false,
+    homing: false,                    // winding the slides back to their start
+    drilling: false,                  // this pass is drilling, not boring
+    toolX: 0, toolR: 0,               // where the tool tip is
+    tailX: 0,                         // and where the tailstock has got to (set on reset)
+    fromX: 0, fromR: 0,               // where the carriage set off from
+    beginX: 0, beginR: 0,             // and where this pass actually starts
+    cutting: false,
+    cutIdle: 9,                       // seconds since the tool last bit
+    cut: 0,                           // mm of travel made this pass
+    passes: 0,
+    elapsed: 0,
+    setupT: 1,                        // 0..1 while fresh stock is loaded
+    pendingSetup: false,              // a job change waiting on the spindle to stop
+    startT: 1,                        // 0..1 while the machine is being started
+    gear: 0,                          // how far the drive lever is thrown
+    fast: false, slow: false,
+    chips: true, sound: true, trace: false,
+    mesh: false, turntable: false, parts: false, guard: true,
+    viewMode: 'blueprint'
+};
+
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---- the chain of consequences ----------------------------------
+const M = () => MATS[state.mat];
+const rpm = () => SPEEDS[state.speed];
+const omega = () => 2 * Math.PI * rpm() / 60;            // rad/s
+
+// THE diameter that matters: the one under the tool right now, not the
+// one the bar started at. This is the whole lesson in one function.
+function liveDia() {
+    if (!rad.length) return P.dia;
+    if (state.op === 'turn') return 2 * radiusAt(state.toolX);
+    if (state.op === 'thread') return 2 * (threadR > 0 ? threadR : radiusAt(state.toolX));
+    // Drilling and boring cut on the INSIDE, so the diameter that counts
+    // is the hole's, not the bar's — and a drill's is fixed, which puts
+    // this operation back in the same case as the bench drill.
+    if (state.op === 'drill') return isDrilling() ? DRILL_D : 2 * state.toolR;
+    // Facing and parting work inwards from the rim, so the tool's own
+    // radius IS the diameter being cut — but only once it is on the
+    // metal. Parked clear of the work it reads as a bar far bigger than
+    // the one in the chuck, and every reading taken off it is fiction.
+    return 2 * Math.min(state.toolR, maxRadius());
+}
+const cutSpeed = () => Math.PI * liveDia() * rpm() / 1000;   // m/min
+const idealRpm = () => M().vc * 1000 / (Math.PI * Math.max(1, liveDia()));
+const speedRatio = () => cutSpeed() / M().vc;
+
+// The chip: feed per revolution by depth of cut. That area is what the
+// whole of the cutting force comes from.
+const chipArea = () => P.feed * P.depth;                 // mm²
+const cutForce = () => M().kc * chipArea();              // N
+// The force acts out at the radius, so a fat bar loads the spindle
+// harder than a thin one for exactly the same chip.
+const cutTorque = () => cutForce() * liveDia() / 2000;   // N·m
+const cutPower = () => cutForce() * cutSpeed() / 60;     // W
+
+const motorTorque = () => MOTOR_W * DRIVE_EFF / Math.max(0.1, omega());
+const availPower = () => MOTOR_W * DRIVE_EFF;
+const overloaded = () => cutPower() > availPower();
+
+// A screw thread has to advance exactly its own pitch every revolution,
+// or it is not a thread. So while threading the feed is taken out of
+// your hands and geared to the spindle — the one operation where the
+// feed knob does nothing at all.
+// the ISO metric coarse series, which is what a shop would actually cut
+const COARSE = [[10, 1.5], [16, 2.0], [20, 2.5], [24, 3.0],
+                [30, 3.5], [36, 4.0], [45, 4.5], [60, 5.5]];
+function threadPitch() {
+    const d = P.dia;
+    for (const [upto, p] of COARSE) if (d <= upto) return p;
+    return 6.0;
+}
+const threadDepth = () => 0.613 * threadPitch();   // full depth of a metric vee
+let threadX0 = 0;                     // how far along the thread has been cut
+let threadCut = 0;                                 // how deep we have got so far
+let threadR = 0;                                   // the major radius it is cut on
+
+const DRILL_D = 12;                                // the pilot drill in the tailstock
+const HOLE_L = 62;                                 // how deep it goes
+// Drilling is finished when the drill has reached DEPTH, not when the
+// first shaving comes off. Testing the bore's maximum flips the moment
+// the drill touches on, and the rest of the pass then runs as boring —
+// which leaves a hole with a plug still in the middle of it.
+const holeStart = () => Math.max(0, xAt(barEndIndex()) - HOLE_L);
+const needsDrill = () => state.op === 'drill'
+                      && boreAt(holeStart()) < DRILL_D / 2 - 0.05;
+// Which of the two this is gets decided ONCE, when the pass starts, and
+// held for the whole pass. Re-deciding it from the geometry every tick
+// means the drill finishes the hole mid-pass and hands over to the
+// boring bar, which feeds the other way — and the two then cancel each
+// other out, tick by tick, and the tool goes nowhere at all.
+const isDrilling = () => state.running ? state.drilling : needsDrill();
+
+// How fast the spindle is DRAWN, as against how fast it is really going.
+// At 800 rpm a chuck turns 80 degrees between one frame and the next;
+// the eye gives up somewhere around 30 and what you see is a strobe
+// rather than a spin — the wagon-wheel effect, and it reads as broken.
+// So the drawn rate is squashed through a tanh: slow speeds are shown
+// honestly, fast ones are slowed to something watchable, and faster
+// still always looks faster. Nothing else uses this. The rpm and
+// cutting-speed readings, the feeds, the forces, the cut itself and the
+// pitch of the sound all run on the true speed.
+// A power law rather than a cap: every speed is slowed, the fast ones
+// much more than the slow, so nothing ever outruns the eye and yet each
+// gear still looks quicker than the one below it. Top gear is really
+// twenty times bottom gear; drawn, it is about two and a half.
+const VIS_K = 0.863, VIS_P = 0.30;
+const shownRps = () => {
+    const rps = Math.max(0, state.spinRpm / 60);
+    if (state.spinView === 'true') return rps;          // honest, and it will strobe
+    const eased = VIS_K * Math.pow(rps, VIS_P);
+    return state.spinView === 'slow' ? eased * 0.42 : eased;
+};
+
+// On a lathe the feed is per REVOLUTION, so the spindle speed is in
+// the time — the opposite of drilling, where it was not.
+const feedRate = () => (state.op === 'thread' ? threadPitch() : P.feed) * rpm();
+function passLength() {
+    if (state.op === 'turn' || state.op === 'thread') return CUT_X1 - CUT_X0;
+    if (state.op === 'drill') return HOLE_L;
+    return P.dia / 2;                              // facing and parting work inwards
+}
+const passTime = () => passLength() / Math.max(0.001, feedRate()) * 60;   // s
+const mrr = () => cutSpeed() * P.feed * P.depth * 1000;  // mm³/min
+
+// =============================================================
+//  The machine, in three dimensions
+// =============================================================
+// The lathe axis runs along x with the headstock at the left. The work
+// turns about that axis; the tool sits at centre height on the near
+// side and comes in from +z. The saddle travels in x, the cross-slide
+// in z — which is exactly the pair of slides on the real machine.
+const AXIS_Y = 300;                   // centre height above the floor
+const BED_X0 = -350, BED_X1 = 460;    // the bed, headstock end to tailstock end
+const BED_TOP = 210;
+const HEAD_X0 = -330, HEAD_X1 = -92;  // the headstock sits on the left of it
+const CHUCK_L = 92;                   // the chuck hangs off the spindle nose
+const CHUCK_FACE = 0;                 // and the bar starts at its face
+const BAR_L = 110;                    // how far the bar sticks out
+const NJAW = 3;                       // a three-jaw self-centring chuck
+const JAW_L = 26;                     // how far the jaws stand off the face
+const JAW_REACH = 14;                 // how far a jaw's step reaches inboard
+const JAW_OPEN = 26;                  // how far they wind back to let a bar in
+const LOAD_UP = 200;                  // the new bar is lowered in from above
+const CUT_X0 = JAW_L + 8, CUT_X1 = BAR_L - 4;   // the tool's travel, clear of the jaws
+const TAIL_X = 330;                   // where the tailstock is parked
+const TAIL_TIP = 164;                 // from its datum out to the point of the centre
+// Heights of the slide stack. Every one of these has to stay under the
+// work, or the casting drives straight through the bar.
+const SADDLE_TOP = BED_TOP + 30;      // 240
+const CROSS_TOP = SADDLE_TOP + 22;    // 262 — below the biggest bar
+const COMP_TOP = CROSS_TOP + 18;      // 280
+// and how far forward of the cutting edge everything else must sit
+const TIP_Z = 18, SHANK_Z = 98, POST_Z0 = 45, COMP_Z0 = 40;
+// The tool TRAILS its own cutting edge. Everything behind the tip sits
+// a little toward the tailstock, over metal that has already been cut
+// away — which is why a real tool can face right in to the centre
+// without its shank fouling the uncut bar beside it.
+const TRAIL_X = 17;
+// how far the shank is swept back from the cutting corner, in radians
+const TOOL_LEAD = 0.40;
+
+let scene, camera, renderer, controls;
+let floor3, grid3, workGrp, workMesh, chuckGrp, spindleGrp;
+let moPulley = null, BELT_RATIO = 1;   // the drive, and what it gears down by
+let guardGrp = null;                   // the acrylic over it, which can come off
+let gearKnobs = [];                    // the gearbox knobs: drive in, and which gear
+let voltNeedle = null, ampNeedle = null;   // the two panel instruments
+let shownVolts = 235, shownAmps = 0;       // eased, because a needle has mass
+// the belt's teeth travel round the loop as the spindle turns
+let beltTeeth = [], beltPath = null, beltLen = 0;
+let beltPitchR = 1, beltX = 0;
+let saddleGrp, crossGrp, toolGrp, toolTip, tailGrp, lampMesh;
+let partGrp = null, partBlade = null, boreGrp = null, drillGrp = null;
+let hWheelObj = null, cWheelObj = null, tWheelObj = null;
+// what one turn of each handwheel is worth, in mm of travel
+const LEAD_CARRIAGE = 40, LEAD_CROSS = 2, LEAD_TAIL = 5;
+let chipGrp = null, chips = [], chuckJaws = [];
+let offcut = null, offcutV = 0, offcutR = 0, offcutDown = false;
+let gl = false;
+const MAT = {};
+
+// ---- the bar, as a profile that the tool eats into ---------------
+// The workpiece is a row of radii sampled along its length. Every
+// operation reduces radii; that one rule covers turning, facing and
+// parting, because all three are the tool sweeping through metal.
+let PAN_TOP = 146;                    // top of the chip pan floor
+const NSEG = 132;
+const dx = () => BAR_L / NSEG;
+let rad = [], bore = [], skin = [];
+function freshBar() {
+    rad = new Array(NSEG + 1).fill(P.dia / 2);
+    bore = new Array(NSEG + 1).fill(0);        // solid bar to begin with
+    skin = new Array(NSEG + 1).fill(1);        // 1 = still as it came, 0 = cut
+    threadCut = 0; threadR = 0; threadX0 = CUT_X1;
+}
+const xAt = i => i * dx();
+function radiusAt(x) {
+    const i = clamp(Math.round(x / dx()), 0, NSEG);
+    return rad[i];
+}
+// Take metal off everywhere the tool body currently is.
+function removeAt(x0, x1, r) {
+    let cutAny = false;
+    const i0 = clamp(Math.floor(x0 / dx()), 0, NSEG);
+    const i1 = clamp(Math.ceil(x1 / dx()), 0, NSEG);
+    for (let i = i0; i <= i1; i++) {
+        if (rad[i] > r) { rad[i] = r; skin[i] = 0; cutAny = true; }
+    }
+    // The step left at the near end of the cut is the face the tool has
+    // just formed — facing and parting off make nothing else — so it
+    // comes up bright along with everything else the tool touched.
+    if (cutAny && i0 > 0) skin[i0 - 1] = 0;
+    return cutAny;
+}
+// and the same rule working outwards from the middle, for boring
+function openBore(x0, x1, r) {
+    let cutAny = false;
+    const i0 = clamp(Math.floor(x0 / dx()), 0, NSEG);
+    const i1 = clamp(Math.ceil(x1 / dx()), 0, NSEG);
+    for (let i = i0; i <= i1; i++) {
+        if (bore[i] < r) { bore[i] = r; cutAny = true; }
+    }
+    return cutAny;   // a bore is cut metal by definition, and is coloured so
+}
+function boreAt(x) {
+    return bore[clamp(Math.round(x / dx()), 0, NSEG)];
+}
+// how much is left of the bar, for the readouts
+const maxRadius = () => rad.reduce((a, b) => Math.max(a, b), 0);
+const maxBore = () => bore.reduce((a, b) => Math.max(a, b), 0);
+
+// ---- decals and surfaces ----------------------------------------
+function roundedBox(w, h, d, r) {
+    const bev = Math.min(1.5, w / 6, h / 6, d / 6);
+    const sh = new THREE.Shape();
+    const W = w / 2 - bev, H = h / 2 - bev, rr = Math.max(0.1, Math.min(r, W, H));
+    sh.moveTo(-W + rr, -H);
+    sh.lineTo(W - rr, -H); sh.quadraticCurveTo(W, -H, W, -H + rr);
+    sh.lineTo(W, H - rr);  sh.quadraticCurveTo(W, H, W - rr, H);
+    sh.lineTo(-W + rr, H); sh.quadraticCurveTo(-W, H, -W, H - rr);
+    sh.lineTo(-W, -H + rr); sh.quadraticCurveTo(-W, -H, -W + rr, -H);
+    return new THREE.ExtrudeGeometry(sh, {
+        depth: d - bev * 2, bevelEnabled: true, bevelThickness: bev,
+        bevelSize: bev, bevelSegments: 2, curveSegments: 6
+    }).translate(0, 0, -(d - bev * 2) / 2);
+}
+
+// The speed chart bolted to the headstock, with the gear you are in
+// picked out. A real lathe carries this because you cannot work the
+// speed out in your head every time the diameter changes.
+let speedTex = null, speedCv = null;
+function drawSpeeds() {
+    if (!speedCv) { speedCv = document.createElement('canvas'); speedCv.width = 320; speedCv.height = 260; }
+    const c = speedCv.getContext('2d');
+    c.fillStyle = '#14181d'; c.fillRect(0, 0, 320, 260);
+    c.fillStyle = '#c9d2dd'; c.font = 'bold 26px sans-serif'; c.textAlign = 'center';
+    c.fillText('SPINDLE  r/min', 160, 34);
+    for (let i = 0; i < SPEEDS.length; i++) {
+        const y = 52 + i * 33, on = i === state.speed;
+        if (on) { c.fillStyle = '#d24b2f'; c.fillRect(12, y, 296, 29); }
+        c.fillStyle = on ? '#ffffff' : '#9aa5b1';
+        c.font = (on ? 'bold ' : '') + '21px sans-serif';
+        c.textAlign = 'left';  c.fillText(String.fromCharCode(65 + i), 28, y + 22);
+        c.textAlign = 'right'; c.fillText(SPEEDS[i], 292, y + 22);
+    }
+    if (speedTex) speedTex.needsUpdate = true;
+}
+function badgeTexture() {
+    const c = document.createElement('canvas');
+    c.width = 348; c.height = 116;
+    const g = c.getContext('2d');
+    g.fillStyle = '#999999'; g.fillRect(0, 0, 348, 116);
+    g.fillStyle = '#ffffff'; g.font = 'bold 58px Inter, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('TCE-LAB', 184, 60);
+    return new THREE.CanvasTexture(c);
+}
+// The face of a four-jaw chuck: turned all over in concentric rings,
+// four slots at right angles for the jaws, a square socket for the key
+// beside each one, and the maker's disc in the middle of it.
+function chuckFaceTexture() {
+    const S = 512, c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d'), M = S / 2;
+    g.fillStyle = '#454c57'; g.beginPath(); g.arc(M, M, M - 2, 0, 7); g.fill();
+    // the concentric tool marks left when the face was skimmed
+    for (let r = M - 6; r > 26; r -= 7) {
+        g.strokeStyle = 'rgba(28,33,40,' + (0.55 + Math.random() * 0.25) + ')';
+        g.lineWidth = 2.6;
+        g.beginPath(); g.arc(M, M, r, 0, 7); g.stroke();
+        g.strokeStyle = 'rgba(200,212,224,0.34)'; g.lineWidth = 1.6;
+        g.beginPath(); g.arc(M, M, r - 3, 0, 7); g.stroke();
+    }
+    // the deeper rings a chuck face is stepped with, every fourth one
+    for (let r = M - 20; r > 30; r -= 28) {
+        g.strokeStyle = 'rgba(18,22,28,0.85)'; g.lineWidth = 5;
+        g.beginPath(); g.arc(M, M, r, 0, 7); g.stroke();
+        g.strokeStyle = 'rgba(210,222,234,0.32)'; g.lineWidth = 2;
+        g.beginPath(); g.arc(M, M, r - 4, 0, 7); g.stroke();
+    }
+    // the three jaw slots, and a key socket outboard of each
+    for (let k = 0; k < NJAW; k++) {
+        const a2 = k / NJAW * Math.PI * 2 + Math.PI / 6;
+        g.save(); g.translate(M, M); g.rotate(a2);
+        g.fillStyle = '#1d2127';
+        g.fillRect(-34, 34, 68, M - 46);                 // the slot
+        g.fillStyle = '#3a414b';
+        g.fillRect(-34, 34, 4, M - 46); g.fillRect(30, 34, 4, M - 46);
+        g.fillStyle = '#1d2126';
+        g.fillRect(-13, M - 68, 26, 26);                 // the square socket
+        g.restore();
+    }
+    g.fillStyle = '#b5301f';
+    g.beginPath(); g.arc(M, M, 58, 0, 7); g.fill();
+    g.strokeStyle = '#7d1f13'; g.lineWidth = 3; g.stroke();
+    g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = 'bold 30px Inter, sans-serif'; g.fillText('TCE', M, M - 12);
+    g.font = 'bold 15px Inter, sans-serif'; g.fillText('3-JAW', M, M + 14);
+    return new THREE.CanvasTexture(c);
+}
+
+let knurlTex = null;
+function knurlTexture() {
+    if (knurlTex) return knurlTex;
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 32;
+    const g = c.getContext('2d');
+    g.fillStyle = '#808790'; g.fillRect(0, 0, 256, 32);
+    for (let i = 0; i < 52; i++) {
+        const x = i * 256 / 52;
+        g.fillStyle = '#ffffff'; g.fillRect(x, 3, 2.6, 26);
+        g.fillStyle = '#2b3038'; g.fillRect(x + 2.6, 3, 1.8, 26);
+    }
+    knurlTex = new THREE.CanvasTexture(c);
+    knurlTex.wrapS = knurlTex.wrapT = THREE.RepeatWrapping;
+    return knurlTex;
+}
+// A turned surface is covered in fine tool marks running round it —
+// the helix the tool leaves at one thou a rev.
+const barTex = {};
+function barTexture(kind) {
+    if (barTex[kind]) return barTex[kind];
+    const c = document.createElement('canvas');
+    c.width = 32; c.height = 256;
+    const g = c.getContext('2d');
+    const base = { alu: '#c9ced6', brass: '#b9993f', steel: '#8b939e' }[kind];
+    g.fillStyle = base; g.fillRect(0, 0, 32, 256);
+    for (let i = 0; i < 256; i += 3) {
+        g.fillStyle = 'rgba(0,0,0,' + (0.05 + Math.random() * 0.10) + ')';
+        g.fillRect(0, i, 32, 1);
+        g.fillStyle = 'rgba(255,255,255,' + (0.04 + Math.random() * 0.10) + ')';
+        g.fillRect(0, i + 1, 32, 1);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(1, 6);
+    barTex[kind] = t;
+    return t;
+}
+
+function init3D() {
+    const host = $('view3d');
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf1f5f9);
+
+    camera = new THREE.PerspectiveCamera(42, 1, 20, 9000);
+    camera.position.set(700, 700, 900);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    host.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 150;
+    controls.maxDistance = 4000;
+    controls.maxPolarAngle = Math.PI / 2 + 0.02;
+    controls.autoRotateSpeed = 0.9;
+    controls.target.set(80, 260, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.26));
+    const key = new THREE.DirectionalLight(0xffffff, 0.72);
+    key.position.set(600, 1200, 900);
+    key.castShadow = true;
+    key.shadow.mapSize.width = key.shadow.mapSize.height = 2048;
+    key.shadow.camera.left = -900; key.shadow.camera.right = 900;
+    key.shadow.camera.top = 900; key.shadow.camera.bottom = -300;
+    key.shadow.camera.far = 3600;
+    key.shadow.bias = -0.0006;
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xbfd4f0, 0.24);
+    fill.position.set(-900, 700, -700); scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.26);
+    rim.position.set(200, 500, -1300); scene.add(rim);
+
+    floor3 = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000),
+        new THREE.MeshStandardMaterial({ color: 0xdbe1ea, roughness: 0.92 }));
+    floor3.rotation.x = -Math.PI / 2;
+    floor3.position.y = -1;
+    floor3.receiveShadow = true;
+    scene.add(floor3);
+    grid3 = new THREE.GridHelper(6000, 60, 0x94a3b8, 0xcbd5e1);
+    scene.add(grid3);
+
+    // Metal shows you its surroundings and little else, so without
+    // something to reflect it renders black. A workshop in a few
+    // strokes: bright ceiling, two strip lights, a darker floor.
+    const ec = document.createElement('canvas');
+    ec.width = 256; ec.height = 128;
+    const eg = ec.getContext('2d');
+    const sky = eg.createLinearGradient(0, 0, 0, 128);
+    sky.addColorStop(0, '#9fa9b6'); sky.addColorStop(0.42, '#7d8794');
+    sky.addColorStop(0.52, '#525a66'); sky.addColorStop(1, '#2e343c');
+    eg.fillStyle = sky; eg.fillRect(0, 0, 256, 128);
+    eg.fillStyle = '#ffffff';
+    eg.fillRect(28, 10, 88, 13); eg.fillRect(150, 10, 88, 13);
+    const pm = new THREE.PMREMGenerator(renderer);
+    pm.compileEquirectangularShader();
+    const et = new THREE.CanvasTexture(ec);
+    et.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = pm.fromEquirectangular(et).texture;
+    et.dispose(); pm.dispose();
+
+    // the same cream enamel over cast iron as the bench drill wears
+    MAT.cast   = new THREE.MeshStandardMaterial({ color: 0xded7c4, roughness: 0.62, metalness: 0.12 });
+    MAT.cast2  = new THREE.MeshStandardMaterial({ color: 0xcec6b1, roughness: 0.66, metalness: 0.10 });
+    MAT.way    = new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.96, roughness: 0.10 });
+    MAT.mach   = new THREE.MeshStandardMaterial({ color: 0x8d9299, roughness: 0.34, metalness: 0.62 });
+    MAT.steel  = new THREE.MeshStandardMaterial({ color: 0xb9bfc9, metalness: 0.68, roughness: 0.22 });
+    MAT.dark   = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.6, metalness: 0.2 });
+    MAT.motor  = new THREE.MeshStandardMaterial({ color: 0x3d434c, roughness: 0.44, metalness: 0.46 });
+    // A chuck body is hardened and blued, far darker than any bar you
+    // would put in it — otherwise a steel workpiece disappears into the
+    // thing holding it. The jaws are a warmer, oiled grey again, so all
+    // three read apart from each other and from the work.
+    MAT.chuck  = new THREE.MeshStandardMaterial({ color: 0x343a44, roughness: 0.46, metalness: 0.58 });
+    MAT.jaw    = new THREE.MeshStandardMaterial({ color: 0x6f6a62, roughness: 0.30, metalness: 0.68 });
+    MAT.tool   = new THREE.MeshStandardMaterial({ color: 0xd6a933, metalness: 0.78, roughness: 0.28 });
+    MAT.carbide= new THREE.MeshStandardMaterial({ color: 0x33383f, metalness: 0.5, roughness: 0.32 });
+    MAT.tray   = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.7, metalness: 0.16 });
+    MAT.handle = new THREE.MeshStandardMaterial({ color: 0x1b1e23, roughness: 0.40, metalness: 0.34 });
+    // Pulleys are cast iron, near black and quite matte — nothing like
+    // the bright machined steel of a way or a handwheel.
+    MAT.iron   = new THREE.MeshStandardMaterial({ color: 0x3c3e40, roughness: 0.66, metalness: 0.24 });
+    // the two drive shafts: dark grey steel, not the bright ground
+    // finish of a way or a handwheel
+    MAT.shaft  = new THREE.MeshStandardMaterial({ color: 0x484d54, roughness: 0.36, metalness: 0.70 });
+
+    MAT.cast.envMapIntensity = MAT.cast2.envMapIntensity = 0.24;
+    MAT.way.envMapIntensity = 2.0;
+    MAT.mach.envMapIntensity = 1.3;
+    MAT.steel.envMapIntensity = 1.2;
+    MAT.chuck.envMapIntensity = 0.75;
+    MAT.jaw.envMapIntensity = 1.15;
+    MAT.tool.envMapIntensity = 1.25;
+    MAT.motor.envMapIntensity = 0.8;
+    MAT.dark.envMapIntensity = 0.4;
+    MAT.handle.envMapIntensity = 0.7;
+    MAT.iron.envMapIntensity = 0.5;
+    MAT.shaft.envMapIntensity = 0.9;
+
+    buildMachine();
+    freshBar();
+    buildBar();
+}
+
+// A machine handwheel: a round rim on three tapered spokes, a hub with
+// a keyed bore, and a handle standing off the rim so you can spin it.
+// Built lying in its own xy-plane, so its axis is z until it is turned.
+function handwheel(R, tube) {
+    const outer = new THREE.Group();   // carries the orientation
+    const g = new THREE.Group();       // and this one does the turning
+    outer.add(g);
+    outer.userData.spin = g;
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(R, tube, 12, 40), MAT.way);
+    rim.castShadow = true; g.add(rim);
+    const hub = new THREE.Mesh(
+        new THREE.CylinderGeometry(tube * 1.8, tube * 1.8, tube * 2.8, 20), MAT.way);
+    hub.rotation.x = Math.PI / 2; hub.castShadow = true; g.add(hub);
+    const bore = new THREE.Mesh(
+        new THREE.CylinderGeometry(tube * 0.7, tube * 0.7, tube * 3.2, 14), MAT.dark);
+    bore.rotation.x = Math.PI / 2; g.add(bore);
+    for (let k = 0; k < 3; k++) {
+        const a2 = k / 3 * Math.PI * 2 + 0.5;
+        const len = R - tube * 0.6;
+        const spoke = new THREE.Mesh(
+            new THREE.CylinderGeometry(tube * 0.5, tube * 0.85, len, 10), MAT.way);
+        spoke.position.set(Math.cos(a2) * len / 2, Math.sin(a2) * len / 2, 0);
+        spoke.rotation.z = a2 - Math.PI / 2;
+        spoke.castShadow = true; g.add(spoke);
+    }
+    // the handle, standing proud of the rim on its own boss
+    const grip = new THREE.Mesh(
+        new THREE.CylinderGeometry(tube * 0.85, tube * 0.72, tube * 4.4, 14), MAT.way);
+    grip.rotation.x = Math.PI / 2;
+    grip.position.set(0, -R, tube * 2.8);
+    grip.castShadow = true; g.add(grip);
+    return outer;
+}
+
+function buildMachine() {
+    // --- stand, chip pan and bed --------------------------------
+    // A lathe of this size stands on two hollow pedestals rather than
+    // legs: a splayed foot, a stepped column, and a recessed panel down
+    // the front that is really the door to the cabinet inside. The
+    // chip pan bridges them and carries the whole machine.
+    // Under the two heavy ends — headstock and tailstock — rather than
+    // bunched toward the middle, which left the headstock end
+    // overhanging its leg by 240 mm and the tailstock end by 40.
+    [[-215, 200], [345, 170]].forEach(([px, pw]) => {
+        const foot = new THREE.Mesh(roundedBox(pw + 30, 20, 252, 5), MAT.cast2);
+        foot.position.set(px, 10, -10);
+        foot.castShadow = foot.receiveShadow = true; scene.add(foot);
+        const low = new THREE.Mesh(roundedBox(pw + 12, 56, 238, 7), MAT.cast2);
+        low.position.set(px, 48, -10);
+        low.castShadow = low.receiveShadow = true; scene.add(low);
+        const col = new THREE.Mesh(roundedBox(pw, 62, 226, 7), MAT.cast2);
+        col.position.set(px, 107, -10);
+        col.castShadow = col.receiveShadow = true; scene.add(col);
+        // the recessed door panel down the front of the cabinet
+        const door = new THREE.Mesh(roundedBox(pw * 0.56, 86, 7, 2), MAT.tray);
+        door.position.set(px, 84, 106); scene.add(door);
+    });
+    // The chip pan: a floor with a lip all the way round, not a slab.
+    // Swarf and anything parted off lands in it.
+    const trayL = BED_X1 - BED_X0 + 110, trayMid = (BED_X0 + BED_X1) / 2;
+    const PAN_Y = 140;   PAN_TOP = PAN_Y + 6;
+    const pan = new THREE.Mesh(roundedBox(trayL, 12, 258, 4), MAT.tray);
+    pan.position.set(trayMid, PAN_Y, -6);
+    pan.castShadow = pan.receiveShadow = true; scene.add(pan);
+    // The front lip has to stop short of the leadscrew, or it hides the
+    // one part that shows the carriage being driven along.
+    // The rear lip has to overlap the pan floor, not stop half a
+    // millimetre short of it.
+    [[130, 28, 148], [-138, 26, 147]].forEach(([pz, ph, py]) => {
+        const lip = new THREE.Mesh(roundedBox(trayL, ph, 13, 3), MAT.tray);
+        lip.position.set(trayMid, py, pz);
+        lip.castShadow = true; scene.add(lip);
+    });
+    [trayMid - trayL / 2 + 7, trayMid + trayL / 2 - 7].forEach(ex => {
+        const end = new THREE.Mesh(roundedBox(13, 28, 258, 3), MAT.tray);
+        end.position.set(ex, 148, -6);
+        end.castShadow = true; scene.add(end);
+    });
+
+    const bedL = BED_X1 - BED_X0;
+    const bed = new THREE.Mesh(roundedBox(bedL, 56, 150, 6), MAT.cast);
+    bed.position.set((BED_X0 + BED_X1) / 2, BED_TOP - 28, 0);
+    bed.castShadow = bed.receiveShadow = true; scene.add(bed);
+    // The ways the saddle and tailstock run on. A lathe bed is not a
+    // flat table: each side carries an inverted vee that locates the
+    // slide sideways, with a flat way inboard of it taking the weight.
+    // Together they make the track section, and it is the vee that
+    // keeps the tailstock in line with the spindle.
+    const vee = new THREE.Shape();
+    vee.moveTo(-17, 0); vee.lineTo(17, 0); vee.lineTo(17, 7);
+    vee.lineTo(0, 18);  vee.lineTo(-17, 7); vee.closePath();
+    [-58, 58].forEach(wz => {
+        const g = new THREE.ExtrudeGeometry(vee, {
+            depth: bedL, bevelEnabled: true, bevelThickness: 1,
+            bevelSize: 1, bevelSegments: 1, curveSegments: 1 });
+        g.translate(0, 0, -bedL / 2);
+        g.rotateY(Math.PI / 2);                 // sweep it along the bed
+        const way = new THREE.Mesh(g, MAT.way);
+        way.position.set((BED_X0 + BED_X1) / 2, BED_TOP - 5, wz);
+        way.castShadow = way.receiveShadow = true; scene.add(way);
+    });
+    [-22, 22].forEach(wz => {
+        const flat = new THREE.Mesh(roundedBox(bedL, 13, 30, 1.5), MAT.way);
+        flat.position.set((BED_X0 + BED_X1) / 2, BED_TOP + 2, wz);
+        flat.castShadow = flat.receiveShadow = true; scene.add(flat);
+    });
+    // the gap down the middle, so the two tracks read as separate rails
+    const trough = new THREE.Mesh(roundedBox(bedL, 9, 22, 1), MAT.cast2);
+    trough.position.set((BED_X0 + BED_X1) / 2, BED_TOP - 5, 0);
+    trough.receiveShadow = true; scene.add(trough);
+
+    // --- headstock, and the gear chart on the front of it --------
+    const headMid = (HEAD_X0 + HEAD_X1) / 2;
+    // The casting stops short of the left-hand end, leaving a bay for the
+    // belt drive where it can actually be seen.
+    const HEAD_L = HEAD_X0 + 52, hMid = (HEAD_L + HEAD_X1) / 2;
+    const head = new THREE.Mesh(roundedBox(HEAD_X1 - HEAD_L, 168, 168, 14), MAT.cast);
+    head.position.set(hMid, AXIS_Y - 16, -6);
+    head.castShadow = true; scene.add(head);
+    // the spindle nose the chuck screws onto, bridging the gap
+    const nose = new THREE.Mesh(new THREE.CylinderGeometry(34, 34, 26, 22), MAT.mach);
+    nose.rotation.z = Math.PI / 2;
+    nose.position.set(HEAD_X1 + 6, AXIS_Y, 0); scene.add(nose);
+
+    speedTex = new THREE.CanvasTexture((drawSpeeds(), speedCv));
+    // Sized and placed against the SHORTENED casting — the drive bay
+    // took 52 mm off its left-hand end, and the chart was still laid
+    // out for the old one, so it hung off the edge in mid air.
+    const chart = new THREE.Mesh(new THREE.PlaneGeometry(92, 74),
+        new THREE.MeshStandardMaterial({ map: speedTex, roughness: 0.45 }));
+    chart.position.set(hMid - 42, AXIS_Y - 6, 79); scene.add(chart);
+    const badge = new THREE.Mesh(new THREE.PlaneGeometry(78, 22),
+        new THREE.MeshStandardMaterial({ map: badgeTexture(), roughness: 0.4 }));
+    badge.position.set(hMid + 50, AXIS_Y + 46, 79); scene.add(badge);
+
+    // the running light: green while the spindle turns, red when the
+    // cut has stopped it
+    const bezel = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 9, 20), MAT.mach);
+    bezel.rotation.x = Math.PI / 2;
+    bezel.position.set(headMid + 56, AXIS_Y - 22, 77); scene.add(bezel);
+    MAT.lamp = new THREE.MeshStandardMaterial({
+        color: 0x1c8f4a, emissive: 0x22c55e, emissiveIntensity: 1.1,
+        roughness: 0.25, metalness: 0 });
+    lampMesh = new THREE.Mesh(new THREE.SphereGeometry(7.5, 18, 14), MAT.lamp);
+    lampMesh.position.set(headMid + 56, AXIS_Y - 22, 82); scene.add(lampMesh);
+
+    // The feed gearbox, hung on the front below the headstock. Its knobs
+    // are what pick the feed per revolution and the thread pitch.
+    const fbox = new THREE.Mesh(roundedBox(158, 88, 56, 6), MAT.cast);
+    fbox.position.set(HEAD_X0 + 96, 186, 96);
+    fbox.castShadow = true; scene.add(fbox);
+    const fplate = new THREE.Mesh(roundedBox(132, 62, 5, 2), MAT.cast2);
+    fplate.position.set(HEAD_X0 + 96, 190, 125); scene.add(fplate);
+    // The panel: two gear knobs above, two instruments below. All the
+    // gear changing happens here on the feed box now, not on top of the
+    // headstock. Each knob sits in a seat tilted to face the operator so
+    // the knob turns about its own axis, and each carries a handle you
+    // could actually take hold of.
+    const PANEL_X = HEAD_X0 + 96;
+    [[-36, 0xd23b2c], [36, 0x2b6cb0]].forEach(([kx, col]) => {
+        const seat = new THREE.Group();
+        seat.rotation.x = Math.PI / 2;
+        seat.position.set(PANEL_X + kx, 208, 133);
+        scene.add(seat);
+        const knob = new THREE.Mesh(new THREE.CylinderGeometry(12, 14, 15, 18),
+            new THREE.MeshStandardMaterial({ color: col, roughness: 0.42,
+                                             metalness: 0.25 }));
+        knob.castShadow = true; seat.add(knob);
+        // The handle leans out of the face rather than lying flat on it,
+        // so there is something to get a hand round.
+        const arm = new THREE.Group();
+        arm.position.set(0, 8, 0);
+        arm.rotation.x = -0.55;
+        knob.add(arm);
+        const bar = new THREE.Mesh(roundedBox(6, 6.5, 30, 2), MAT.mach);
+        bar.position.z = 13; bar.castShadow = true; arm.add(bar);
+        const ball = new THREE.Mesh(new THREE.SphereGeometry(5.5, 14, 12), MAT.handle);
+        ball.position.z = 27; ball.castShadow = true; arm.add(ball);
+        const dot = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 3, 8), MAT.dark);
+        dot.position.set(0, 9, -9.5); knob.add(dot);
+        gearKnobs.push(knob);
+    });
+    // a rib between the controls and the instruments
+    const split = new THREE.Mesh(roundedBox(128, 4, 4, 1.5), MAT.cast2);
+    split.position.set(PANEL_X, 190, 129); scene.add(split);
+
+    // Two panel instruments. They are only telling you what the physics
+    // already says — volts sag a little under load, and the current is
+    // the power the cut is taking divided by the voltage — but a motor
+    // with no meters on it does not look like a machine.
+    function meterFace(unit, max) {
+        const S = 256, c = document.createElement('canvas');
+        c.width = c.height = S;
+        const g = c.getContext('2d'), M = S / 2;
+        g.fillStyle = '#f2efe4'; g.beginPath(); g.arc(M, M, M - 2, 0, 7); g.fill();
+        g.strokeStyle = '#c9c3b0'; g.lineWidth = 4;
+        g.beginPath(); g.arc(M, M, M - 6, 0, 7); g.stroke();
+        for (let i = 0; i <= 10; i++) {
+            const f = i / 10, a = (150 + f * 240) * Math.PI / 180;
+            const big = i % 2 === 0, r0 = M - 22, r1 = M - (big ? 44 : 34);
+            g.strokeStyle = f > 0.82 ? '#b5301f' : '#22262c';
+            g.lineWidth = big ? 5 : 2.5;
+            g.beginPath();
+            g.moveTo(M + Math.cos(a) * r0, M + Math.sin(a) * r0);
+            g.lineTo(M + Math.cos(a) * r1, M + Math.sin(a) * r1);
+            g.stroke();
+            if (big) {
+                g.fillStyle = '#22262c';
+                g.font = 'bold 22px Inter, sans-serif';
+                g.textAlign = 'center'; g.textBaseline = 'middle';
+                g.fillText(String(Math.round(max * f)),
+                           M + Math.cos(a) * (r1 - 18), M + Math.sin(a) * (r1 - 18));
+            }
+        }
+        g.fillStyle = '#22262c';
+        g.font = 'bold 34px Inter, sans-serif';
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(unit, M, M + 52);
+        return new THREE.CanvasTexture(c);
+    }
+    function meter(unit, max, px) {
+        const grp = new THREE.Group();
+        grp.position.set(px, 170, 134); scene.add(grp);   // proud of the panel
+        const can = new THREE.Mesh(new THREE.CylinderGeometry(25, 25, 10, 26), MAT.mach);
+        can.rotation.x = Math.PI / 2; can.castShadow = true; grp.add(can);
+        const face = new THREE.Mesh(new THREE.CircleGeometry(22, 30),
+            new THREE.MeshStandardMaterial({ map: meterFace(unit, max),
+                                             roughness: 0.55 }));
+        face.position.z = 5.2; grp.add(face);
+        const needle = new THREE.Group(); needle.position.z = 6;
+        grp.add(needle);
+        const n = new THREE.Mesh(roundedBox(1.8, 19, 1.4, 0.5), MAT.dark);
+        n.position.y = 8; needle.add(n);
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 3, 12), MAT.dark);
+        hub.rotation.x = Math.PI / 2; hub.position.z = 6.4; grp.add(hub);
+        const bezel = new THREE.Mesh(new THREE.TorusGeometry(23.5, 2.2, 8, 28), MAT.mach);
+        bezel.position.z = 5.6; grp.add(bezel);
+        return needle;
+    }
+    voltNeedle = meter('V', 300, PANEL_X - 36);
+    ampNeedle  = meter('A', 6,   PANEL_X + 36);
+
+    // the red band along the top of the headstock
+    // a stripe round the joint where the top casting meets the body,
+    // which is where it sits on the real machine — not across the top,
+    // where the speed levers have to stand
+    const band = new THREE.Mesh(roundedBox(HEAD_X1 - HEAD_L + 2, 8, 170, 2),
+        new THREE.MeshStandardMaterial({ color: 0xb5301f, roughness: 0.45,
+                                         metalness: 0.12 }));
+    band.position.set(hMid, AXIS_Y + 70, -6);
+    band.castShadow = true; scene.add(band);
+
+
+    // --- motor, slung behind the headstock ----------------------
+    // A totally-enclosed fan-cooled motor: bearing housings stepped in
+    // at each end, cooling fins running the length of the frame rather
+    // than round it, a fan cowl over the far end, and feet it is bolted
+    // down by. It is longer than it is fat, which is the thing that
+    // makes a motor read as a motor.
+    const MOT_X = -196, MOT_Y = AXIS_Y - 24, MOT_Z = -140;
+    const MOT_R = 46, MOT_L = 86;                 // half-length
+    const motorGrp = new THREE.Group();
+    motorGrp.position.set(MOT_X, MOT_Y, MOT_Z);
+    scene.add(motorGrp);
+    const mprof = [[0, -MOT_L], [30, -MOT_L], [33, -MOT_L + 6], [33, -MOT_L + 16],
+                   [MOT_R, -MOT_L + 22], [MOT_R, MOT_L - 22], [33, MOT_L - 16],
+                   [33, MOT_L - 6], [30, MOT_L], [0, MOT_L]]
+                  .map(q => new THREE.Vector2(q[0], q[1]));
+    const body = new THREE.Mesh(
+        new THREE.LatheGeometry(mprof, 30).rotateZ(-Math.PI / 2), MAT.motor);
+    body.castShadow = body.receiveShadow = true; motorGrp.add(body);
+    for (let k = 0; k < 26; k++) {
+        const a = k / 26 * Math.PI * 2;
+        const fin = new THREE.Mesh(new THREE.BoxGeometry(MOT_L * 2 - 46, 7, 3.2), MAT.motor);
+        fin.position.set(0, Math.sin(a) * (MOT_R + 2.5), Math.cos(a) * (MOT_R + 2.5));
+        fin.rotation.x = Math.PI / 2 - a;   // radial, not tangential
+        fin.castShadow = true; motorGrp.add(fin);
+    }
+    // The fan cowl SLEEVES OVER the tail of the frame — it does not
+    // start where the frame stops. Butted onto the end it stood 12 mm
+    // clear of the casting all the way round and read as floating.
+    // rotation.z = pi/2 puts the cylinder's `top` at -x, so the wide
+    // end of the taper is the one nearest the motor.
+    const cowl = new THREE.Mesh(
+        new THREE.CylinderGeometry(47, 38, 48, 24, 1, true), MAT.dark);
+    cowl.rotation.z = Math.PI / 2;
+    cowl.position.set(MOT_L, 0, 0);            // laps back over the frame
+    cowl.castShadow = true; motorGrp.add(cowl);
+    const cowlEnd = new THREE.Mesh(new THREE.CircleGeometry(38, 24), MAT.dark);
+    cowlEnd.rotation.y = Math.PI / 2;
+    cowlEnd.position.set(MOT_L + 24, 0, 0); motorGrp.add(cowlEnd);
+    for (let k = 0; k < 8; k++) {
+        const a = k / 8 * Math.PI;
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(3, 76, 4), MAT.motor);
+        bar.position.set(MOT_L + 25, 0, 0); bar.rotation.x = a;
+        motorGrp.add(bar);
+    }
+    // the feet it stands on, and the plate under them
+    [-MOT_L + 34, MOT_L - 34].forEach(fx => {
+        const foot = new THREE.Mesh(roundedBox(26, 14, 116, 3), MAT.motor);
+        foot.position.set(fx, -MOT_R - 5, 0);
+        foot.castShadow = true; motorGrp.add(foot);
+        // and the bolts holding it down to the bed plate, two a foot
+        [-44, 44].forEach(bz => {
+            const stud = new THREE.Mesh(
+                new THREE.CylinderGeometry(3.4, 3.4, 22, 10), MAT.way);
+            stud.position.set(fx, -MOT_R - 8, bz); motorGrp.add(stud);
+            const nut = new THREE.Mesh(
+                new THREE.CylinderGeometry(6, 6, 7, 6), MAT.dark);
+            nut.position.set(fx, -MOT_R + 4, bz);
+            nut.castShadow = true; motorGrp.add(nut);
+            const wash = new THREE.Mesh(
+                new THREE.CylinderGeometry(7.5, 7.5, 2, 12), MAT.mach);
+            wash.position.set(fx, -MOT_R - 0.5, bz); motorGrp.add(wash);
+        });
+    });
+    const plate = new THREE.Mesh(roundedBox(MOT_L * 2 + 20, 12, 132, 4), MAT.cast2);
+    plate.position.set(0, -MOT_R - 18, 0);
+    plate.castShadow = plate.receiveShadow = true; motorGrp.add(plate);
+    const nameplate = new THREE.Mesh(new THREE.PlaneGeometry(52, 22),
+        new THREE.MeshStandardMaterial({ color: 0xb8bec6, roughness: 0.4,
+                                         metalness: 0.5 }));
+    nameplate.position.set(-10, 0, MOT_R + 4.5); motorGrp.add(nameplate);
+
+    // The motor has to be wired to something. A terminal box on top of
+    // it, then flexible conduit looping across to the back of the
+    // headstock, with enough slack in it to look like it was fitted by
+    // somebody rather than drawn.
+    const tbox = new THREE.Mesh(roundedBox(48, 26, 40, 3), MAT.motor);
+    tbox.position.set(-20, MOT_R + 11, 0);
+    tbox.castShadow = true; motorGrp.add(tbox);
+    const tlid = new THREE.Mesh(roundedBox(52, 5, 44, 1.5), MAT.dark);
+    tlid.position.set(-20, MOT_R + 26, 0); motorGrp.add(tlid);
+    const TB_X = MOT_X - 20, TB_Y = MOT_Y + MOT_R + 28;
+    // Two cores, live and neutral, in the colours they always are — and
+    // each one leaving through a proper gland rather than sprouting out
+    // of the lid. A cable that just starts in mid-air over a box does
+    // not look connected to anything.
+    [{ off: -13, r: 3.4, hex: 0xb5301f, sag: 0 },
+     { off:  11, r: 3.1, hex: 0x1a1d22, sag: 8 }].forEach(k => {
+        const gland1 = new THREE.Mesh(
+            new THREE.CylinderGeometry(k.r + 2.6, k.r + 4.2, 13, 12), MAT.mach);
+        gland1.position.set(TB_X + k.off, TB_Y - 3, -140);
+        gland1.castShadow = true; scene.add(gland1);
+        const nut = new THREE.Mesh(
+            new THREE.CylinderGeometry(k.r + 4.6, k.r + 4.6, 5, 6), MAT.dark);
+        nut.position.set(TB_X + k.off, TB_Y - 9, -140); scene.add(nut);
+        const c = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(TB_X + k.off, TB_Y + 2, -140),
+            new THREE.Vector3(TB_X + k.off, TB_Y + 20, -137),
+            new THREE.Vector3(TB_X + k.off + 16, TB_Y + 25 - k.sag, -121),
+            new THREE.Vector3(TB_X + k.off + 30, TB_Y + 6 - k.sag, -100),
+            new THREE.Vector3(-186 + k.off * 0.30, AXIS_Y + 44, -92),  // through the clamp
+            new THREE.Vector3(-176 + k.off * 0.35, AXIS_Y + 16, -78)]);
+        const t = new THREE.Mesh(new THREE.TubeGeometry(c, 48, k.r, 10, false),
+            new THREE.MeshStandardMaterial({ color: k.hex, roughness: 0.62,
+                                             metalness: 0.04 }));
+        t.castShadow = true; scene.add(t);
+    });
+    // Where they go into the casting: a proper entry plate bolted to the
+    // back of the headstock, with its own gland for each core and a
+    // clamp above holding the pair together. A cable that just meets a
+    // casting and stops does not look connected to it.
+    const entry = new THREE.Mesh(roundedBox(62, 40, 7, 3), MAT.cast2);
+    entry.position.set(-176, AXIS_Y + 16, -84);
+    entry.castShadow = true; scene.add(entry);
+    [[-24, 12], [24, 12], [-24, -12], [24, -12]].forEach(([bx, by]) => {
+        const bolt = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 5, 6), MAT.dark);
+        bolt.rotation.x = Math.PI / 2;
+        bolt.position.set(-176 + bx, AXIS_Y + 16 + by, -80); scene.add(bolt);
+    });
+    [-13, 11].forEach((off, i) => {
+        const g2 = new THREE.Mesh(
+            new THREE.CylinderGeometry(i ? 6.5 : 7, i ? 8 : 8.5, 14, 14), MAT.mach);
+        g2.rotation.x = Math.PI / 2;
+        g2.position.set(-176 + off * 0.35, AXIS_Y + 16, -76);
+        g2.castShadow = true; scene.add(g2);
+        const nut2 = new THREE.Mesh(
+            new THREE.CylinderGeometry(i ? 8.6 : 9.1, i ? 8.6 : 9.1, 4, 6), MAT.dark);
+        nut2.rotation.x = Math.PI / 2;
+        nut2.position.set(-176 + off * 0.35, AXIS_Y + 16, -70); scene.add(nut2);
+    });
+    // the clamp that carries the pair down the back of the casting
+    const clamp2 = new THREE.Mesh(roundedBox(26, 9, 12, 2), MAT.mach);
+    clamp2.position.set(-186, AXIS_Y + 44, -92);
+    clamp2.castShadow = true; scene.add(clamp2);
+    const cScrew = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 8, 6), MAT.dark);
+    cScrew.position.set(-186, AXIS_Y + 50, -92); scene.add(cScrew);
+
+    // --- spindle and the three-jaw chuck ------------------------
+    spindleGrp = new THREE.Group();
+    spindleGrp.position.set(0, AXIS_Y, 0);
+    scene.add(spindleGrp);
+
+    // =====================================================
+    //  The drive: motor, pulleys and belt, behind glass
+    // =====================================================
+    // A lathe hides this inside the headstock, where a student never
+    // sees it. Here the casting stops short and the bay is closed with
+    // an acrylic guard instead, so the chain from motor to chuck is
+    // visible: the motor turns the small pulley, the belt carries that
+    // to the big one, and the big one IS the spindle the chuck is
+    // screwed to. The pulleys are different sizes, so the spindle turns
+    // slower than the motor and with correspondingly more torque —
+    // the same bargain the bench drill makes with its cone pulleys.
+    const DRIVE_X = -318;
+    // Sized so the flanged rim still clears the guard floor, which in
+    // turn has to clear the crests of the bed vee ways.
+    // nominal tooth-circle radii; the exact ones are solved for below
+    const SP_R = 54, MO_R = 28, MO_Y = AXIS_Y - 24, MO_Z = -140;
+    BELT_RATIO = SP_R / MO_R;
+
+    // A toothed (timing) drive. One belt, not three: its teeth mesh
+    // with teeth on the pulleys, so it cannot slip and the spindle
+    // speed is an exact ratio of the motor's instead of an approximate
+    // one. The pulleys are cast as wheels — rim, arms, hub — with a
+    // flange each side to keep the belt from walking off.
+    // A toothed (timing) drive. The whole point of teeth is that the
+    // belt CANNOT slip: the spindle turns one tooth for every tooth the
+    // motor turns, so the ratio is a whole-number one and stays exact
+    // for ever. That only works if the belt and both wheels share one
+    // pitch exactly, so the pitch is solved for rather than assumed —
+    // the tooth circles are nudged until the belt loop and both wheels
+    // come out a whole number of teeth at the same spacing.
+    const PITCH = 10, BELT_W = 11, BELT_T = 6, TOOTH_R = 2.3;
+    const loopLen = (r1, r2, d) => {
+        const bt = Math.acos((r1 - r2) / d);
+        return r1 * (2 * Math.PI - 2 * bt) + r2 * (2 * bt)
+             + 2 * Math.sqrt(d * d - (r1 - r2) * (r1 - r2));
+    };
+    const dU = MO_Y - AXIS_Y, dV = MO_Z - 0, dd = Math.hypot(dU, dV);
+    let Rsp = SP_R, Rmo = MO_R, pitch = PITCH, nSp = 0, nMo = 0, nBelt = 0;
+    for (let it = 0; it < 5; it++) {
+        const L = loopLen(Rsp, Rmo, dd);
+        nBelt = Math.max(16, Math.round(L / PITCH));
+        pitch = L / nBelt;
+        nSp = Math.max(12, Math.round(2 * Math.PI * Rsp / pitch));
+        nMo = Math.max(8, Math.round(2 * Math.PI * Rmo / pitch));
+        Rsp = nSp * pitch / (2 * Math.PI);
+        Rmo = nMo * pitch / (2 * Math.PI);
+    }
+    BELT_RATIO = nSp / nMo;            // a ratio of tooth counts, not of radii
+
+    // A wheel: toothed rim between two flanges, three tapered spokes
+    // cast the same way as the handwheels', and a hub with the taper
+    // bush that locks it to its shaft.
+    // `bore` is the shaft it actually goes on, so the hub is sized to
+    // the shaft instead of being invented — otherwise the shaft comes
+    // out fatter than the hub it is supposed to pass through.
+    function pulley(Rt, nt, narm, bore) {
+        const g = new THREE.Group();
+        const V2 = q => new THREE.Vector2(q[0], q[1]);
+        const lathe = pr => {
+            const m = new THREE.Mesh(
+                new THREE.LatheGeometry(pr.map(V2), 44).rotateZ(-Math.PI / 2), MAT.iron);
+            m.castShadow = m.receiveShadow = true; g.add(m); return m;
+        };
+        const HW = BELT_W / 2 + 3;
+        const root = Rt - TOOTH_R * 0.8;
+        // The flange only has to stop the belt walking off, so it stands
+        // just proud of the teeth. Any taller and it buries the belt and
+        // the drive looks like it has none.
+        const Rf = Rt + TOOTH_R + 1.5;
+        // A three-armed wheel wants a SMALL centre, LONG arms and a
+        // THIN ring — the proportions of a three-pointed star. Make the
+        // hub fat or the ring deep and it stops reading as a star and
+        // starts reading as a boss with lugs on it.
+        const rb = bore, rh = bore + 5;
+        const rr = root - Math.max(5, root * 0.09);
+        const BOSS = 7;
+        if (narm > 0 && rr > rh + 14) {
+            lathe([[rr, -HW - 4], [Rf, -HW - 4], [Rf, -HW], [root, -HW],
+                   [root, HW], [Rf, HW], [Rf, HW + 4], [rr, HW + 4], [rr, -HW - 4]]);
+            lathe([[rb, -HW - BOSS], [rh, -HW - BOSS], [rh, HW],
+                   [rb, HW], [rb, -HW - BOSS]]);
+            const sRoot = Math.max(2.6, rr * 0.14), sTip = sRoot * 0.6;
+            for (let k = 0; k < narm; k++) {
+                const a = k / narm * Math.PI * 2 + 0.5, rm = (rh + rr) / 2;
+                const spoke = new THREE.Mesh(
+                    new THREE.CylinderGeometry(sTip, sRoot, rr - rh + 6, 10), MAT.iron);
+                spoke.position.set(0, Math.sin(a) * rm, Math.cos(a) * rm);
+                // A spoke grows along its own +y. Rotating by -a lays it
+                // ACROSS the wheel like a chord, with both ends floating
+                // in the gap; pi/2 - a is what points it at the centre.
+                spoke.rotation.x = Math.PI / 2 - a;
+                spoke.castShadow = spoke.receiveShadow = true; g.add(spoke);
+            }
+        } else {
+            // Too small for arms — and a pulley this size really is cast
+            // solid, with the web dished back off the rim.
+            lathe([[rb, -HW - BOSS], [rh, -HW - BOSS], [rh, -HW - 4],
+                   [Rf, -HW - 4], [Rf, -HW], [root, -HW], [root, HW],
+                   [Rf, HW], [Rf, HW + 4], [Math.max(rh + 4, rr), HW + 4],
+                   [Math.max(rh + 4, rr), -HW + 2], [rh, -HW + 2],
+                   [rb, -HW + 2], [rb, -HW - BOSS]]);
+        }
+        // rounded HTD teeth, lying along the shaft so they look the
+        // same from every angle
+        // full width between the flanges — a tooth narrower than its
+        // own channel looks like a bead sitting in a groove
+        const tg = new THREE.CylinderGeometry(TOOTH_R, TOOTH_R, HW * 2 - 1, 10)
+                       .rotateZ(Math.PI / 2);
+        for (let k = 0; k < nt; k++) {
+            const a = k / nt * Math.PI * 2;
+            const t = new THREE.Mesh(tg, MAT.iron);
+            t.position.set(0, Math.sin(a) * Rt, Math.cos(a) * Rt);
+            g.add(t);
+        }
+        for (let k = 0; k < 3; k++) {
+            const a = k / 3 * Math.PI * 2 + 0.4, rr2 = rb + 5;
+            const cap = new THREE.Mesh(
+                new THREE.CylinderGeometry(3, 3, 7, 10), MAT.dark);
+            cap.rotation.z = Math.PI / 2;
+            cap.position.set(-HW - BOSS + 1, Math.sin(a) * rr2, Math.cos(a) * rr2);
+            g.add(cap);
+        }
+        return g;
+    }
+    const spPulley = pulley(Rsp, nSp, 3, 15);
+    spPulley.position.set(DRIVE_X, 0, 0);
+    spindleGrp.add(spPulley);
+    // right through the hub and out the far side, so the bore of the
+    // taper bush has a shaft in it rather than a hole
+    const spStub = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 108, 20), MAT.shaft);
+    spStub.rotation.z = Math.PI / 2;
+    spStub.position.set(DRIVE_X + 26, 0, 0); spindleGrp.add(spStub);
+
+    moPulley = pulley(Rmo, nMo, 0, 11);
+    moPulley.position.set(DRIVE_X, MO_Y, MO_Z);
+    scene.add(moPulley);
+    const moShaft = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 68, 14), MAT.shaft);
+    moShaft.rotation.z = Math.PI / 2;
+    moShaft.position.set(DRIVE_X + 6, MO_Y, MO_Z); scene.add(moShaft);
+
+    // Two paths on the same tangents: one through the tooth centres,
+    // which is what the teeth ride on and what the belt's speed is
+    // measured along, and one a little outside it for the strap itself.
+    function beltPath2(r1, r2) {
+        const A = { u: AXIS_Y, v: 0, r: r1 }, Bp = { u: MO_Y, v: MO_Z, r: r2 };
+        const th = Math.atan2(MO_Z, MO_Y - AXIS_Y);
+        const bt = Math.acos((r1 - r2) / dd);
+        const at = (C, a) => new THREE.Vector3(0, C.u + Math.cos(a) * C.r,
+                                                  C.v + Math.sin(a) * C.r);
+        const bp = [];
+        for (let a = th + bt; a < th - bt + Math.PI * 2; a += 0.06) bp.push(at(A, a));
+        bp.push(at(A, th - bt + Math.PI * 2));
+        const s1 = at(A, th - bt), e1 = at(Bp, th - bt);
+        for (let k = 1; k <= 3; k++) bp.push(s1.clone().lerp(e1, k / 4));
+        for (let a = th - bt; a < th + bt; a += 0.06) bp.push(at(Bp, a));
+        bp.push(at(Bp, th + bt));
+        const s2 = at(Bp, th + bt), e2 = at(A, th + bt);
+        for (let k = 1; k <= 3; k++) bp.push(s2.clone().lerp(e2, k / 4));
+        const c = new THREE.CatmullRomCurve3(bp, true);
+        // The default 200-entry arc-length table is far too coarse for a
+        // half-metre loop: teeth placed from it run a couple of per cent
+        // fast or slow depending on where they are.
+        c.arcLengthDivisions = 4000;
+        return c;
+    }
+    const BAND_OFF = TOOTH_R + BELT_T / 2 - 0.4;
+    const toothPath = beltPath2(Rsp, Rmo);
+    const bandPath = beltPath2(Rsp + BAND_OFF, Rmo + BAND_OFF);
+    const beltMat = new THREE.MeshStandardMaterial({
+        color: 0x24272c, roughness: 0.72, metalness: 0.04 });
+    const beltG = new THREE.TubeGeometry(bandPath, 420, BELT_T / 2, 10, true);
+    beltG.scale(BELT_W / BELT_T, 1, 1);
+    beltG.translate(DRIVE_X, 0, 0);
+    const belt = new THREE.Mesh(beltG, beltMat);
+    belt.castShadow = true; scene.add(belt);
+
+    // The teeth ride ON the tooth path, so their spacing and their
+    // speed are the wheels' own — no drift, however long it runs.
+    beltPath = toothPath;
+    beltLen = toothPath.getLength();
+    beltX = DRIVE_X;
+    beltPitchR = Rsp;
+    const btg = new THREE.CylinderGeometry(TOOTH_R - 0.3, TOOTH_R - 0.3, BELT_W - 1.5, 10)
+                    .rotateZ(Math.PI / 2);
+    beltTeeth = [];
+    for (let k = 0; k < nBelt; k++) {
+        const tooth = new THREE.Mesh(btg, beltMat);
+        tooth.userData.s = k / nBelt * beltLen;
+        scene.add(tooth); beltTeeth.push(tooth);
+    }
+    runBelt();
+
+    // The guard. Acrylic, so the whole drive stays in sight, with a
+    // frame round its edges so it reads as a panel with thickness.
+    MAT.acrylic = new THREE.MeshPhysicalMaterial({
+        color: 0xdff0f6, transparent: true, opacity: 0.10,
+        roughness: 0.06, metalness: 0, transmission: 0.0,
+        side: THREE.DoubleSide, depthWrite: false });
+    // The floor of the guard has to clear the crests of the vee ways,
+    // which are the highest thing on the bed.
+    // The guard follows the drive rather than boxing it in: a big circle
+    // round the spindle wheel, a small one round the motor wheel, and
+    // the two outer tangents joining them — the same construction the
+    // belt itself runs on, so the cover is the belt's own shape held
+    // off by a constant clearance. It is what a real belt guard is.
+    const GX0 = -366, GX1 = -280;   // laps onto the headstock end face
+    const SPF = Rsp + TOOTH_R + 1.5, MOF = Rmo + TOOTH_R + 1.5;
+    function outlinePts(pad) {
+        const rA = SPF + pad, rB = MOF + pad;
+        const th = Math.atan2(MO_Z, MO_Y - AXIS_Y);
+        const bt = Math.acos((rA - rB) / dd);
+        // shape space: local x is world z, local y is world y
+        const pt = (cu, cv, r, a) => [cv + Math.sin(a) * r, cu + Math.cos(a) * r];
+        const P = [];
+        for (let a = th + bt; a < th - bt + Math.PI * 2; a += 0.10)
+            P.push(pt(AXIS_Y, 0, rA, a));
+        P.push(pt(AXIS_Y, 0, rA, th - bt + Math.PI * 2));
+        for (let a = th - bt; a < th + bt; a += 0.10)
+            P.push(pt(MO_Y, MO_Z, rB, a));
+        P.push(pt(MO_Y, MO_Z, rB, th + bt));
+        return P;
+    }
+    // `hole` makes it a RING rather than a filled plate. The frames were
+    // solid discs of steel across the whole opening, which is why the
+    // guard was anything but transparent looked at from the front.
+    function driveOutline(pad, hole) {
+        const P = outlinePts(pad);
+        const sh = new THREE.Shape();
+        sh.moveTo(P[0][0], P[0][1]);
+        for (let i = 1; i < P.length; i++) sh.lineTo(P[i][0], P[i][1]);
+        sh.closePath();
+        if (hole != null) {
+            const H = outlinePts(hole).slice().reverse();
+            const path = new THREE.Path();
+            path.moveTo(H[0][0], H[0][1]);
+            for (let i = 1; i < H.length; i++) path.lineTo(H[i][0], H[i][1]);
+            path.closePath();
+            sh.holes.push(path);
+        }
+        return sh;
+    }
+    function outlineMesh(pad, depth, mat, bevel, hole) {
+        const g = new THREE.ExtrudeGeometry(driveOutline(pad, hole), {
+            depth: depth, bevelEnabled: bevel > 0, bevelThickness: bevel,
+            bevelSize: bevel, bevelSegments: 1, curveSegments: 1 });
+        g.rotateY(-Math.PI / 2);       // sweep it along the bed instead
+        return new THREE.Mesh(g, mat);
+    }
+    guardGrp = new THREE.Group(); scene.add(guardGrp);
+    const guard = outlineMesh(10, GX1 - GX0, MAT.acrylic, 2);
+    guard.position.x = GX1; guard.renderOrder = 4; guardGrp.add(guard);
+    // No metal frame at all: an acrylic guard is a single moulded sheet,
+    // and the only thing that shows at its edge is the cut face of the
+    // sheet itself catching the light. So the edge is acrylic too, just
+    // a shade denser than the panel — a thin bright line, nothing more.
+    MAT.glassEdge = new THREE.MeshPhysicalMaterial({
+        color: 0xe8f5fa, transparent: true, opacity: 0.42,
+        roughness: 0.04, metalness: 0,
+        side: THREE.DoubleSide, depthWrite: false });
+    MAT.glassEdge.envMapIntensity = 1.4;
+    [GX0 + 1, GX1 - 1].forEach(fx => {
+        const rim = outlineMesh(10.7, 1.6, MAT.glassEdge, 0, 9.5);
+        rim.position.x = fx; rim.renderOrder = 5; guardGrp.add(rim);
+    });
+    // Small tabs lapped onto the end of the headstock, NOT a plate
+    // across the opening — that is a cover, not a window. Each takes a
+    // bolt into the casting.
+    [[62, 34], [-56, 40], [-30, -76]].forEach(([by, bz]) => {
+        const tab = new THREE.Mesh(roundedBox(16, 34, 30, 3), MAT.mach);
+        tab.position.set(GX1 + 3, AXIS_Y + by, bz);
+        tab.castShadow = true; guardGrp.add(tab);
+        const bolt = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 12, 6), MAT.dark);
+        bolt.rotation.z = Math.PI / 2;
+        bolt.position.set(GX1 + 9, AXIS_Y + by, bz); guardGrp.add(bolt);
+    });
+    guardGrp.visible = state.guard;
+
+    chuckGrp = new THREE.Group();
+    spindleGrp.add(chuckGrp);
+    // The body: a plain cylinder with a chamfered rim, flat across the
+    // front. A four-jaw independent has no scroll ring round it — each
+    // jaw is wound in on its own square, which is why it can hold work
+    // that is not round.
+    const CH_R = 86;
+    const cprof = [[26, -CHUCK_L], [CH_R - 8, -CHUCK_L], [CH_R, -CHUCK_L + 9],
+                   [CH_R, -9], [CH_R - 7, 0], [26, 0], [0, 0]];
+    const chBody = new THREE.Mesh(
+        new THREE.LatheGeometry(cprof.map(p => new THREE.Vector2(p[0], p[1])), 52)
+            .rotateZ(-Math.PI / 2), MAT.chuck);
+    chBody.castShadow = true; chuckGrp.add(chBody);
+    // the turned front face, with its slots, sockets and maker's disc
+    const face = new THREE.Mesh(new THREE.CircleGeometry(CH_R - 7, 56),
+        new THREE.MeshStandardMaterial({ map: chuckFaceTexture(),
+                                         metalness: 0.30, roughness: 0.52 }));
+    face.rotation.y = Math.PI / 2;
+    face.position.x = 0.6; chuckGrp.add(face);
+
+    // Three jaws, each a staircase: a tall heel out in the slot, then
+    // two steps down toward the centre. The face of the last step is
+    // what actually holds the bar, and all three wind in together.
+    chuckJaws = [];
+    for (let k = 0; k < NJAW; k++) {
+        const a = k / NJAW * Math.PI * 2 + Math.PI / 6;
+        const jaw = new THREE.Group();
+        const heel = new THREE.Mesh(roundedBox(JAW_L, 26, 42, 2), MAT.jaw);
+        heel.position.set(JAW_L / 2, 9, 0); jaw.add(heel);
+        const step1 = new THREE.Mesh(roundedBox(19, 15, 34, 2), MAT.jaw);
+        step1.position.set(9.5, -6, 0); jaw.add(step1);
+        const step2 = new THREE.Mesh(roundedBox(11, 10, 26, 1.5), MAT.jaw);
+        step2.position.set(5.5, -JAW_REACH + 5, 0); jaw.add(step2);
+        jaw.userData.a = a;
+        jaw.castShadow = true;
+        chuckGrp.add(jaw);
+        chuckJaws.push(jaw);
+    }
+
+    // --- tailstock, parked clear of the work --------------------
+    tailGrp = new THREE.Group();
+    tailGrp.position.set(TAIL_X, 0, 0);
+    const tBase = new THREE.Mesh(roundedBox(150, 40, 130, 6), MAT.cast);
+    tBase.position.set(0, BED_TOP + 26, 0);
+    tBase.castShadow = true; tailGrp.add(tBase);
+    const tBody = new THREE.Mesh(roundedBox(140, 96, 104, 10), MAT.cast);
+    tBody.position.set(6, AXIS_Y - 8, 0);
+    tBody.castShadow = true; tailGrp.add(tBody);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(21, 21, 96, 22), MAT.way);
+    barrel.rotation.z = Math.PI / 2;
+    barrel.position.set(-72, AXIS_Y, 0);
+    barrel.castShadow = true; tailGrp.add(barrel);
+    const centre = new THREE.Mesh(new THREE.ConeGeometry(19, 44, 22), MAT.mach);
+    centre.rotation.z = Math.PI / 2;
+    centre.position.set(-142, AXIS_Y, 0); tailGrp.add(centre);
+    // the drill that goes in the tailstock instead of the centre
+    drillGrp = new THREE.Group();
+    const dBody = new THREE.Mesh(
+        new THREE.CylinderGeometry(DRILL_D / 2, DRILL_D / 2, 96, 18), MAT.tool);
+    dBody.rotation.z = Math.PI / 2;
+    dBody.position.set(-112, AXIS_Y, 0);
+    dBody.castShadow = true; drillGrp.add(dBody);
+    const dPoint = new THREE.Mesh(
+        new THREE.ConeGeometry(DRILL_D / 2, 10, 18), MAT.tool);
+    dPoint.rotation.z = -Math.PI / 2;
+    dPoint.position.set(-165, AXIS_Y, 0); drillGrp.add(dPoint);
+    drillGrp.visible = false;
+    tailGrp.add(drillGrp);
+    const tBoss = new THREE.Mesh(new THREE.CylinderGeometry(20, 22, 14, 18), MAT.mach);
+    tBoss.rotation.z = Math.PI / 2;
+    tBoss.position.set(80, AXIS_Y, 0);
+    tBoss.castShadow = true; tailGrp.add(tBoss);
+    const tShaft = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 56, 16), MAT.way);
+    tShaft.rotation.z = Math.PI / 2;
+    tShaft.position.set(88, AXIS_Y, 0);
+    tShaft.castShadow = true; tailGrp.add(tShaft);
+    tWheelObj = handwheel(34, 5.5);
+    tWheelObj.rotation.y = Math.PI / 2;       // its shaft runs along the bed
+    tWheelObj.position.set(108, AXIS_Y, 0);
+    tailGrp.add(tWheelObj);
+    scene.add(tailGrp);
+
+    // --- leadscrew and feed shaft along the front ----------------
+    const lead = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, bedL - 20, 16),
+        new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.9, roughness: 0.3,
+                                         bumpMap: knurlTexture(), bumpScale: 1.6 }));
+    lead.rotation.z = Math.PI / 2;
+    lead.position.set((BED_X0 + BED_X1) / 2, BED_TOP - 34, 96);
+    lead.castShadow = true; scene.add(lead);
+    const feedShaft = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, bedL - 20, 14), MAT.way);
+    feedShaft.rotation.z = Math.PI / 2;
+    feedShaft.position.set((BED_X0 + BED_X1) / 2, BED_TOP - 58, 90);
+    feedShaft.castShadow = true; scene.add(feedShaft);
+
+    // --- the saddle, and everything that rides on it -------------
+    saddleGrp = new THREE.Group();
+    const saddle = new THREE.Mesh(roundedBox(130, 30, 210, 6), MAT.cast);
+    saddle.position.set(0, BED_TOP + 15, 0);
+    saddle.castShadow = true; saddleGrp.add(saddle);
+    // the apron hanging down the front, with the traverse handwheel
+    const apron = new THREE.Mesh(roundedBox(120, 84, 26, 6), MAT.cast);
+    apron.position.set(0, BED_TOP - 14, 103);
+    apron.castShadow = true; saddleGrp.add(apron);
+    // The handwheels have to stand off the castings on their own
+    // shafts. Flush against the apron there is nowhere to put a hand,
+    // and on a real machine the boss and shaft are what carry the
+    // wheel clear of everything else on the front.
+    // Set along the apron rather than straight under the cross-slide
+    // wheel, so the two are not stacked one behind the other and each
+    // has its own room. That is how they sit on the real machine.
+    const HW_X = -62, HW_Y = BED_TOP - 30;
+    const hBoss = new THREE.Mesh(new THREE.CylinderGeometry(21, 23, 13, 18), MAT.mach);
+    hBoss.rotation.x = Math.PI / 2;
+    hBoss.position.set(HW_X, HW_Y, 120);
+    hBoss.castShadow = true; saddleGrp.add(hBoss);
+    const hShaft = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 44, 14), MAT.way);
+    hShaft.rotation.x = Math.PI / 2;
+    hShaft.position.set(HW_X, HW_Y, 132);
+    hShaft.castShadow = true; saddleGrp.add(hShaft);
+    hWheelObj = handwheel(42, 6);
+    hWheelObj.position.set(HW_X, HW_Y, 150);
+    saddleGrp.add(hWheelObj);
+
+    // The cross-slide sets the depth of cut. Its top has to stay under
+    // the biggest bar the chuck will hold, because it travels right in
+    // past the centre line — that is how facing reaches the axis.
+    crossGrp = new THREE.Group();
+    const cross = new THREE.Mesh(roundedBox(112, 22, 190, 5), MAT.cast2);
+    cross.position.set(0, CROSS_TOP - 11, 34);
+    cross.castShadow = true; crossGrp.add(cross);
+    const cBoss = new THREE.Mesh(new THREE.CylinderGeometry(16, 18, 11, 18), MAT.mach);
+    cBoss.rotation.x = Math.PI / 2;
+    cBoss.position.set(0, CROSS_TOP - 11, 134);
+    cBoss.castShadow = true; crossGrp.add(cBoss);
+    const cShaft = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 40, 14), MAT.way);
+    cShaft.rotation.x = Math.PI / 2;
+    cShaft.position.set(0, CROSS_TOP - 11, 148);
+    cShaft.castShadow = true; crossGrp.add(cShaft);
+    cWheelObj = handwheel(30, 5);
+    cWheelObj.position.set(0, CROSS_TOP - 11, 166);
+    crossGrp.add(cWheelObj);
+    const dial = new THREE.Mesh(new THREE.CylinderGeometry(20, 20, 12, 22), MAT.mach);
+    dial.rotation.x = Math.PI / 2;
+    dial.position.set(0, CROSS_TOP - 11, 124); crossGrp.add(dial);
+
+    // A four-way turret toolpost. The tool is gripped in the slot where the
+// top plate meets the block below it, and the whole turret is locked by
+// the tapered boss in the middle: slacken the lever, swing round to the
+// next of the four tools, nip it up again. That is why the plate carries
+// eight bolts and not two — one pair holding down each of the four
+// stations. The joint line sits at the height of the tool shank,
+// because that is what the two halves are clamping.
+function fourWayPost(x, z) {
+    const g = new THREE.Group();
+    const SEAT = AXIS_Y - 4.5;              // top of the shank = the slot
+    const add = (m, px, py, pz) => { m.position.set(px, py, pz);
+                                     m.castShadow = true; g.add(m); return m; };
+    // the block the tool sits on, sunk a little into the compound
+    add(new THREE.Mesh(roundedBox(64, SEAT - COMP_TOP + 8, 64, 3), MAT.mach),
+        x, (COMP_TOP - 8 + SEAT) / 2, z);
+    // the clamp plate over it, overhanging on every side
+    add(new THREE.Mesh(roundedBox(76, 14, 76, 2), MAT.steel), x, SEAT + 7, z);
+    // two bolts to a side, eight in all, one pair for each station
+    const BOLT = [[26, 13], [26, -13], [-26, 13], [-26, -13],
+                  [13, 26], [-13, 26], [13, -26], [-13, -26]];
+    BOLT.forEach(([bx, bz]) => {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 9, 8), MAT.mach),
+            x + bx, SEAT + 18, z + bz);                       // the thread standing proud
+        add(new THREE.Mesh(new THREE.CylinderGeometry(6.6, 6.6, 9, 6), MAT.dark),
+            x + bx, SEAT + 26, z + bz);                       // and its hex head
+    });
+    // the collar the turret swivels on
+    add(new THREE.Mesh(new THREE.CylinderGeometry(21, 22, 6, 26), MAT.mach),
+        x, SEAT + 17, z);
+    // The locking boss: a bullet, widest near the top and domed over,
+    // not a cone standing on its point.
+    const boss = [[0, 0], [15, 0], [16.5, 5], [16.5, 26], [15.5, 32],
+                  [12, 37], [6, 40], [0, 41]].map(q => new THREE.Vector2(q[0], q[1]));
+    add(new THREE.Mesh(new THREE.LatheGeometry(boss, 26), MAT.way), x, SEAT + 20, z);
+
+    // The lever is cranked, not straight: a short stub leans back out of
+    // the boss, then it elbows over and runs out shallowly with a
+    // knurled grip on the end. Every piece hangs off a pivot rooted
+    // inside the boss and grows along its own axis, so the whole thing
+    // stays attached however it is swung.
+    const pivot = new THREE.Group();
+    pivot.position.set(x, SEAT + 48, z);
+    pivot.rotation.y = 0.30;                 // swung round toward the operator
+    g.add(pivot);
+    const stubG = new THREE.Group();
+    stubG.rotation.x = -0.30;                // the stub leans away from you
+    pivot.add(stubG);
+    const stub = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 6.0, 20, 14), MAT.handle);
+    stub.position.y = 10; stub.castShadow = true; stubG.add(stub);
+    const elbow = new THREE.Mesh(new THREE.SphereGeometry(4.9, 16, 12), MAT.handle);
+    elbow.position.y = 20; stubG.add(elbow);
+
+    const armG = new THREE.Group();
+    armG.position.y = 20;
+    armG.rotation.x = 1.50;                  // and then it bends back over the top
+    stubG.add(armG);
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(4.0, 4.8, 34, 14), MAT.handle);
+    rod.position.y = 15; rod.castShadow = true; armG.add(rod);
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(6.2, 6.6, 30, 16), MAT.handle);
+    grip.position.y = 44; grip.castShadow = true; armG.add(grip);
+    [34, 41, 48].forEach(gy => {             // the knurled bands on the sleeve
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(6.8, 6.8, 1.6, 16), MAT.mach);
+        ring.position.y = gy; armG.add(ring);
+    });
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(6.3, 16, 12), MAT.handle);
+    cap.position.y = 59; cap.scale.y = 0.62; armG.add(cap);
+    return g;
+}
+
+// Everything from here up is TALL, so it all has to sit forward of
+    // the work: the compound, the toolpost, and only then the tool
+    // reaching back to the cutting edge.
+    const compound = new THREE.Mesh(roundedBox(96, 18, 96, 5), MAT.cast);
+    compound.position.set(TRAIL_X, COMP_TOP - 9, COMP_Z0 + 48);
+    compound.castShadow = true; crossGrp.add(compound);
+
+    toolGrp = new THREE.Group();
+    toolGrp.add(fourWayPost(TRAIL_X, POST_Z0 + 32));
+    // A right-hand turning tool: a rhombic carbide insert clamped on the
+    // end of a shank, with the shank swept back toward the tailstock so
+    // it trails the cutting corner instead of rubbing the work beside
+    // it. The insert's nose sits at local z = 0, so the cross-slide's
+    // position IS the radius being cut.
+    // Only the SHANK is swept back. The insert stays square to the work,
+    // because if it turns with the shank one of its side corners swings
+    // inside the nose radius and the tool quietly cuts deeper than it
+    // has been set to.
+    const bitGrp = new THREE.Group();
+    bitGrp.rotation.y = TOOL_LEAD;
+    // Set out far enough that the lead angle cannot swing its inboard
+    // corner into the tailstock's live centre, which sits on the axis
+    // out to z = 19.
+    const shank = new THREE.Mesh(roundedBox(20, 20, 104, 2), MAT.tool);
+    shank.position.set(11, AXIS_Y - 14.5, 88);     // behind the seat, clear of the nose
+    shank.castShadow = true; bitGrp.add(shank);
+    toolGrp.add(bitGrp);
+    // the seat the insert is clamped into, square to the work
+    const seat = new THREE.Mesh(roundedBox(24, 6, 50, 1.5), MAT.tool);
+    seat.position.set(12, AXIS_Y - 7.5, 25);       // long enough to reach the shank
+    seat.castShadow = true; toolGrp.add(seat);
+    // The insert is a rhombus set at a lead angle, so its NOSE is the
+    // furthest point both toward the work and toward the chuck. Nothing
+    // of the tool then reaches ahead of the cut or into the uncut step
+    // beside it — which is what lets one tool both turn and face.
+    const ish = new THREE.Shape();
+    ish.moveTo(0, 0); ish.lineTo(11, -5); ish.lineTo(16, -16); ish.lineTo(5, -11);
+    ish.closePath();
+    const ig = new THREE.ExtrudeGeometry(ish, {
+        depth: 4.5, bevelEnabled: true, bevelThickness: 0.5,
+        bevelSize: 0.5, bevelSegments: 1, curveSegments: 2 });
+    ig.rotateX(-Math.PI / 2);
+    toolTip = new THREE.Mesh(ig, MAT.carbide);
+    toolTip.position.set(0, AXIS_Y - 4.5, 0.7);    // top face at centre height, nose on the radius
+    toolTip.castShadow = true; toolGrp.add(toolTip);
+    // and the clamp that holds it down
+    const clampArm = new THREE.Mesh(roundedBox(10, 8, 14, 1), MAT.mach);
+    clampArm.position.set(11, AXIS_Y + 2.5, 11);
+    clampArm.castShadow = true; toolGrp.add(clampArm);
+    const clampScrew = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 10, 10), MAT.dark);
+    clampScrew.position.set(11, AXIS_Y + 7, 11); toolGrp.add(clampScrew);
+
+    // A parting tool is a different animal: a thin deep blade with
+    // nothing alongside it, because it has to go down a slot barely
+    // wider than itself. A turning tool's shank would foul the bar.
+    partGrp = new THREE.Group();
+    partBlade = new THREE.Mesh(roundedBox(PART_W, 26, 84, 1), MAT.carbide);
+    partBlade.position.set(PART_W / 2, AXIS_Y, 42);
+    partBlade.castShadow = true; partGrp.add(partBlade);
+    const pHold = new THREE.Mesh(roundedBox(22, 52, 66, 3), MAT.tool);
+    pHold.position.set(PART_W / 2, AXIS_Y, 117);
+    pHold.castShadow = true; partGrp.add(pHold);
+    partGrp.add(fourWayPost(PART_W / 2, POST_Z0 + 32));
+    partGrp.visible = false;
+    crossGrp.add(partGrp);
+
+    // A boring bar: a long round shank that reaches down inside the
+    // hole, with the tip on the far side of the bore from the operator.
+    boreGrp = new THREE.Group();
+    const bShank = new THREE.Mesh(
+        new THREE.CylinderGeometry(7, 7, 120, 16), MAT.tool);
+    bShank.rotation.z = Math.PI / 2;
+    bShank.position.set(-60, AXIS_Y, 0);
+    bShank.castShadow = true; boreGrp.add(bShank);
+    const bTip = new THREE.Mesh(roundedBox(10, 9, 10, 1), MAT.carbide);
+    bTip.position.set(-118, AXIS_Y + 5, 0); boreGrp.add(bTip);
+    const bHold = new THREE.Mesh(roundedBox(46, 44, 46, 3), MAT.mach);
+    bHold.position.set(14, COMP_TOP + 22, 0);
+    bHold.castShadow = true; boreGrp.add(bHold);
+    boreGrp.visible = false;
+    crossGrp.add(boreGrp);
+    crossGrp.add(toolGrp);
+    saddleGrp.add(crossGrp);
+    scene.add(saddleGrp);
+
+    chipGrp = new THREE.Group(); scene.add(chipGrp);
+}
+
+// ---- the bar itself, rebuilt from the radius profile -------------
+// A lathe geometry swept from the row of radii. Every operation just
+// pushes those radii down, so turning, facing and parting all fall out
+// of the same array.
+let barDirty = true;
+function barEndIndex() {
+    for (let i = NSEG; i >= 0; i--) if (rad[i] > 0.06) return i;
+    return 0;
+}
+function buildBar() {
+    if (!workGrp) { workGrp = new THREE.Group(); spindleGrp.add(workGrp); }
+    if (workMesh) { workGrp.remove(workMesh); workMesh.geometry.dispose(); }
+    const end = barEndIndex();
+    const hollow = maxBore() > 0.05;
+    const pts = [], face = [];      // and, for each, how cut that surface is
+    if (hollow) {
+        // up the outside, across the end, and back down the bore, so the
+        // sweep closes on a tube rather than a solid
+        pts.push(new THREE.Vector2(Math.max(0.05, bore[0]), 0)); face.push(0);
+        for (let i = 0; i <= end; i++) {
+            pts.push(new THREE.Vector2(Math.max(0.05, rad[i]), xAt(i))); face.push(skin[i]); }
+        for (let i = end; i >= 0; i--) {
+            pts.push(new THREE.Vector2(Math.max(0.05, bore[i]), xAt(i))); face.push(0); }
+    } else {
+        pts.push(new THREE.Vector2(0, 0)); face.push(0);
+        for (let i = 0; i <= end; i++) {
+            pts.push(new THREE.Vector2(Math.max(0.05, rad[i]), xAt(i))); face.push(skin[i]); }
+        pts.push(new THREE.Vector2(0.05, xAt(end))); face.push(0);
+    }
+    const g = new THREE.LatheGeometry(pts, 52).rotateZ(-Math.PI / 2);
+    // Paint the skin on. A lathe geometry lays its vertices out one ring
+    // of the profile at a time, so every vertex knows which point of the
+    // profile it came from — and therefore whether the tool has been
+    // over it.
+    const sk = M().skin, np = pts.length;
+    const col = new Float32Array(g.attributes.position.count * 3);
+    for (let v = 0; v < g.attributes.position.count; v++) {
+        const t = face[v % np];                       // 1 = untouched, 0 = cut
+        col[v * 3]     = 1 + (sk[0] - 1) * t;
+        col[v * 3 + 1] = 1 + (sk[1] - 1) * t;
+        col[v * 3 + 2] = 1 + (sk[2] - 1) * t;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const m = workMesh ? workMesh.material : new THREE.MeshStandardMaterial({
+        color: 0xffffff, map: barTexture(state.mat), vertexColors: true,
+        roughness: M().rough, metalness: M().metal });
+    workMesh = new THREE.Mesh(g, m);
+    workMesh.castShadow = workMesh.receiveShadow = true;
+    workGrp.add(workMesh);
+    buildThread();
+    barDirty = false;
+    applyMesh();
+}
+let mounted = { mat: null, dia: null };   // what is actually in the chuck
+function newStock() {
+    freshBar();
+    mounted.mat = state.mat; mounted.dia = P.dia;
+    if (workMesh) { workMesh.material.map = barTexture(state.mat);
+                    workMesh.material.roughness = M().rough;
+                    workMesh.material.metalness = M().metal;
+                    workMesh.material.needsUpdate = true; }
+    buildBar();
+}
+
+// A thread is a helix, which the bar's own profile cannot express — it
+// is a surface of revolution and a thread is not. So the crest is wound
+// on as its own ribbon, deepening pass by pass.
+let threadMesh = null;
+function buildThread() {
+    if (threadMesh) {
+        workGrp.remove(threadMesh);
+        threadMesh.geometry.dispose(); threadMesh.material.dispose();
+        threadMesh = null;
+    }
+    if (threadCut < 0.02 || threadR < 0.02) return;
+    const p = threadPitch(), R = threadR;
+    // Only as far as the tool has actually travelled. Sweeping the
+    // whole length the moment the pass begins put a finished thread on
+    // the bar before anything had been cut.
+    const x0 = Math.max(CUT_X0, threadX0), x1 = CUT_X1;
+    if (x1 - x0 < p * 0.6) return;
+    const turns = (x1 - x0) / p;
+    const pts = [];
+    const per = 14;                                  // points per turn
+    for (let k = 0; k <= turns * per; k++) {
+        const t = k / per;                           // turns so far
+        const x = x0 + t * p, a = t * Math.PI * 2;
+        pts.push(new THREE.Vector3(x, Math.cos(a) * (R - threadCut / 2),
+                                      Math.sin(a) * (R - threadCut / 2)));
+    }
+    if (pts.length < 4) return;
+    const curve = new THREE.CatmullRomCurve3(pts);
+    // The crest has to be thinner than the pitch or there is no groove
+    // left between the turns and the thread reads as a plain cylinder.
+    // At half the depth it reaches the major diameter exactly and still
+    // leaves a vee you can see.
+    const tm = workMesh.material.clone();
+    tm.vertexColors = false;                      // a freshly cut crest, all bright
+    threadMesh = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, pts.length * 2,
+                               Math.max(0.35, threadCut * 0.5), 7, false), tm);
+    threadMesh.castShadow = true;
+    workGrp.add(threadMesh);
+}
+
+// ---- swarf -------------------------------------------------------
+const CHIP_MAX = 110;
+function spawnChip() {
+    if (!state.chips || chips.length >= CHIP_MAX) return;
+    const c = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.0, 7.5),
+        new THREE.MeshStandardMaterial({ color: M().chip, roughness: 0.45, metalness: 0.5 }));
+    c.position.set(state.toolX, AXIS_Y + 4, state.toolR + 6);
+    c.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+    chipGrp.add(c);
+    // thrown off the way the work is turning: up and toward the front
+    // thrown forward, over the front of the machine, the way swarf
+    // actually comes off at the operator
+    chips.push({ m: c,
+        vx: (Math.random() - 0.5) * 90,
+        vy: 70 + Math.random() * 150,
+        vz: 190 + Math.random() * 190,
+        spin: (Math.random() - 0.5) * 16 });
+}
+function stepChips(dt) {
+    for (let i = chips.length - 1; i >= 0; i--) {
+        const c = chips[i];
+        c.vy -= 900 * dt;
+        c.m.position.x += c.vx * dt;
+        c.m.position.y += c.vy * dt;
+        c.m.position.z += c.vz * dt;
+        c.m.rotation.x += c.spin * dt;
+        if (c.m.position.y <= 1.2) {          // and settles on the floor
+            c.m.position.y = 1.2; c.vy = 0;
+            c.vx *= 0.55; c.vz *= 0.55; c.spin *= 0.55;
+        }
+        const gone = c.m.position.z > 760 || Math.abs(c.m.position.x) > 900;
+        if (gone) {
+            chipGrp.remove(c.m); c.m.geometry.dispose(); c.m.material.dispose();
+            chips.splice(i, 1);
+        }
+    }
+}
+function clearChips() {
+    chips.forEach(c => { chipGrp.remove(c.m); c.m.geometry.dispose(); c.m.material.dispose(); });
+    chips = [];
+}
+
+// =============================================================
+//  Cutting
+// =============================================================
+const PART_X = 74;                    // where a parting cut is taken
+const PART_W = 3.2;                   // width of the parting blade
+const RAPID = 900;                    // mm/min for the free approach
+
+// Where the tailstock ought to be: up against the end of the work for
+// turning, right back out of the way for anything that cuts the end.
+function tailTarget() {
+    if (!(state.running || state.power)) return TAIL_X;
+    // It stays back until the carriage has been wound past it —
+    // otherwise the two slides try to occupy the same bed.
+    if (state.startT < 0.80) return TAIL_X;
+    // turning: the centre comes up and supports the end of the work
+    if (state.op === 'turn') return xAt(barEndIndex()) + TAIL_TIP;
+    // drilling: the drill itself is in the tailstock, and follows the hole in
+    if (isDrilling()) return state.toolX + TAIL_TIP;
+    return TAIL_X;
+}
+const tailSet = () => Math.abs(state.tailX - tailTarget()) < 0.6;
+
+// Picking a job should not drop you straight into an alarm. Choosing a
+// material or an operation sets the machine up the way a machinist
+// would have set it: the gear that puts the edge near the right cutting
+// speed, and a chip the motor can actually carry. Change anything
+// yourself after that and the alarms are back to telling you the truth —
+// which is the whole point of them.
+function syncSliders() {
+    ['feed', 'depth'].forEach(k => {
+        $('s-' + k).value = P[k];
+        $('v-' + k).textContent = P[k].toFixed(2);
+    });
+}
+function autoSet() {
+    // Threading is done SLOWLY: the tool has to come out of the groove
+    // cleanly at the end of every pass, so a fifth of turning speed.
+    const target = M().vc * (state.op === 'thread' ? 0.20 : 1);
+    // the stock as it goes in, not whatever the tool happens to be
+    // parked at — a tool sitting clear of the work reads as a huge
+    // diameter and would have the gear chosen off a fiction
+    const d = Math.max(4, P.dia);
+    let best = 0, bestErr = Infinity;
+    SPEEDS.forEach((n, i) => {
+        const err = Math.abs(Math.PI * d * n / 1000 - target);
+        if (err < bestErr) { bestErr = err; best = i; }
+    });
+    state.speed = best;
+    // then take the chip down until the motor can carry it
+    let guard = 0;
+    while (cutPower() > availPower() * 0.90 && guard++ < 60) {
+        if (P.depth > 0.30) P.depth = Math.max(0.25, P.depth - 0.05);
+        else if (P.feed > 0.07) P.feed = Math.max(0.05, P.feed - 0.02);
+        else break;
+    }
+    // A slow material at its right speed makes for a long pass, so take
+    // the coarsest feed the motor will carry rather than crawling
+    // through it on a quarter of the power available.
+    if (state.op === 'turn' || state.op === 'face' || state.op === 'drill') {
+        guard = 0;
+        while (P.feed < 0.38 && guard++ < 40) {
+            const next = Math.min(0.40, P.feed + 0.02);
+            const was = P.feed; P.feed = next;
+            if (cutPower() > availPower() * 0.78) { P.feed = was; break; }
+        }
+    }
+    syncSliders();
+    paintSpeeds();
+    if (gl) drawSpeeds();
+}
+
+// Where the slides live between jobs: the carriage parks down by the
+// tailstock, clear of the chuck, and is wound along to the work when
+// there is a cut to take. Winding it there is half of setting up.
+const PARK_X = 186;
+const homeX = () => PARK_X;
+const homeR = () => P.dia / 2 + 12;
+function homeTool() {
+    state.toolX = homeX(); state.toolR = homeR(); state.tailX = TAIL_X;
+    state.homing = false;
+}
+
+// Work out where this pass begins, but do NOT jump the carriage there —
+// it is wound along from wherever it is parked, which is something you
+// watch happen.
+function startPass() {
+    state.homing = false;
+    const end = barEndIndex();
+    state.fromX = state.toolX; state.fromR = state.toolR;
+    // Cleared for every pass. Left set from a previous drilling pass it
+    // made isDrilling() lie, and the tailstock drove its drill into the
+    // work during parting.
+    state.drilling = false;
+    if (state.op === 'turn') {
+        state.beginX = CUT_X1;
+        state.beginR = Math.max(0, radiusAt(CUT_X1) - P.depth);
+    } else if (state.op === 'thread') {
+        // the major diameter is whatever the bar is when threading starts
+        if (threadCut < 0.001) threadR = radiusAt(CUT_X1);
+        // each pass goes a little deeper, until the vee is full depth
+        threadCut = Math.min(threadDepth(), threadCut + P.depth * 0.35);
+        state.beginX = CUT_X1;
+        state.beginR = Math.max(0, threadR - threadCut);
+    } else if (state.op === 'face') {
+        state.beginX = Math.max(CUT_X0, xAt(end) - P.depth);
+        state.beginR = maxRadius() + 2;
+    } else if (state.op === 'drill') {
+        // a drill goes in from the tailstock; a boring bar follows it
+        state.drilling = needsDrill();
+        state.beginX = state.drilling ? xAt(end) : holeStart();
+        state.beginR = state.drilling ? DRILL_D / 2 : maxBore() + P.depth;
+    } else {
+        state.beginX = PART_X;
+        state.beginR = maxRadius() + 2;
+    }
+    state.cut = 0;
+    state.elapsed = 0;
+}
+
+function step(dt) {
+    // The spindle runs whenever there is power. A lathe is switched on
+    // and left running; what you do is wind the tool into it. It also
+    // runs DOWN rather than stopping dead — including when the job is
+    // changed underneath it, which is why this comes before everything.
+    const stalled = state.running && state.cutting && overloaded();
+    state.stalled = stalled;
+    const wantRpm = (state.power && !stalled && state.setupT >= 1
+                     && !state.pendingSetup) ? rpm() : 0;
+    // It coasts to a stop normally, but when a job is waiting to be
+    // changed the brake goes on — four seconds of freewheeling before
+    // the jaws will open is nobody's idea of a transition.
+    const k = stalled ? 26
+            : wantRpm > state.spinRpm ? 2.4
+            : (state.setupT < 1 || state.pendingSetup) ? 2.9 : 1.1;
+    state.spinRpm += (wantRpm - state.spinRpm) * Math.min(1, k * dt);
+    if (Math.abs(wantRpm - state.spinRpm) < 8) state.spinRpm = wantRpm;
+    state.spin += 2 * Math.PI * state.spinRpm / 60 * dt;
+    state.spinShown += 2 * Math.PI * shownRps() * dt;
+
+    // the drive lever, thrown over once the motor is up and let back
+    // when the machine stops
+    const wantGear = (state.running && state.startT >= 0.45) ? 1 : 0;
+    state.gear += (wantGear - state.gear) * Math.min(1, 5 * dt);
+
+    // Winding the slides back is something you watch happen, not a jump
+    // cut: the tool comes off the work and the tailstock draws back.
+    if (state.homing) {
+        const k = Math.min(1, 3.4 * dt);
+        state.toolX += (homeX() - state.toolX) * k;
+        state.toolR += (homeR() - state.toolR) * k;
+        if (Math.abs(homeX() - state.toolX) < 0.5 &&
+            Math.abs(homeR() - state.toolR) < 0.5) homeTool();
+    }
+
+    if (state.pendingSetup) {
+        // still winding down with the old bar gripped, exactly as it was
+        if (state.spinRpm > 4) return;
+        const flat = Math.round(state.spinShown / (Math.PI * 2)) * Math.PI * 2;
+        if (Math.abs(state.spinShown - flat) > 0.02) {
+            state.spinShown += (flat - state.spinShown) * Math.min(1, 9 * dt);
+            state.spin = state.spinShown;
+            return;
+        }
+        state.spinShown = state.spin = flat;
+        state.pendingSetup = false;         // stopped and square: change it now
+        state.setupT = 0; setupCue = 0;
+        if (gl) newStock();
+        return;
+    }
+    if (state.setupT < 1) {
+        // Nothing is unclamped while the chuck is still turning: the
+        // spindle has to run down first, and then settle to a whole
+        // turn so the new bar comes down into the jaws straight.
+        if (state.spinRpm > 4) return;
+        const flat = Math.round(state.spinShown / (Math.PI * 2)) * Math.PI * 2;
+        if (Math.abs(state.spinShown - flat) > 0.02) {
+            state.spinShown += (flat - state.spinShown) * Math.min(1, 9 * dt);
+            state.spin = state.spinShown;
+            return;
+        }
+        state.spinShown = state.spin = flat;
+        if (setupCue === 0) { cue(aPlace); setupCue = 1; }
+        state.setupT = Math.min(1, state.setupT + dt / SETUP_T);
+        if (setupCue === 1 && state.setupT >= 0.62) { cue(aBolt); setupCue = 2; }
+        return;
+    }
+
+    // Long work wants supporting, so the tailstock comes up and takes
+    // the end before any metal is cut. It cannot be there for facing or
+    // parting — those cut the very end the centre would be sitting in —
+    // so for those it winds back out of the way first.
+    const tt = tailTarget();
+    // Once it is up, the drill and the tailstock are one thing and move
+    // together — easing toward a target that is itself moving makes the
+    // gate below stutter, and halves the feed.
+    if (isDrilling() && state.running && Math.abs(tt - state.tailX) < 12) {
+        state.tailX = tt;
+    } else {
+        state.tailX += (tt - state.tailX) * Math.min(1, 3.2 * dt);
+        if (Math.abs(tt - state.tailX) < 0.5) state.tailX = tt;
+    }
+
+    if (!state.running) return;
+    if (stalled) return;                    // bogged down, going nowhere
+    // You do not switch a lathe on and cut with it in the same movement.
+    // The motor comes up to speed, the drive is engaged, and only then
+    // does the tool begin to feed.
+    if (state.startT < 1) {
+        // A boring bar goes where the tailstock drill has just been, so
+        // the carriage holds off until the tailstock is back home.
+        if (state.op === 'drill' && !state.drilling
+            && Math.abs(state.tailX - TAIL_X) > 4) return;
+        state.startT = Math.min(1, state.startT + dt / START_T);
+        // motor up, drive engaged, THEN the carriage is wound along to
+        // the work — the handwheel turns because it reads off toolX
+        const g = clamp((state.startT - 0.50) / 0.42, 0, 1);
+        const e = g * g * (3 - 2 * g);
+        state.toolX = state.fromX + (state.beginX - state.fromX) * e;
+        state.toolR = state.fromR + (state.beginR - state.fromR) * e;
+        if (state.startT >= 1) {
+            state.toolX = state.beginX; state.toolR = state.beginR;
+        }
+        return;
+    }
+    if (!tailSet()) return;                 // nothing cuts until it is in place
+
+    const rate = feedRate() / 60 * dt;      // mm this tick
+    let cutting = false;
+
+    if (state.op === 'turn') {
+        // feeding from the tailstock end toward the chuck
+        state.toolX = Math.max(CUT_X0, state.toolX - rate);
+        cutting = removeAt(state.toolX, CUT_X1, state.toolR);
+        state.cut = CUT_X1 - state.toolX;
+        if (state.toolX <= CUT_X0 + 1e-6) finishPass();
+    } else if (state.op === 'thread') {
+        // The tool cuts the vee down to the ROOT, and the helical crest
+        // is put back on top. Cutting the root is what makes a thread
+        // visible at all — leave the bar at its major diameter and the
+        // crest has nothing to stand out of.
+        state.toolX = Math.max(CUT_X0, state.toolX - rate);
+        cutting = removeAt(state.toolX, CUT_X1, threadR - threadCut);
+        threadX0 = Math.min(threadX0, state.toolX);   // the thread grows behind the tool
+        state.cut = CUT_X1 - state.toolX;
+        if (state.toolX <= CUT_X0 + 1e-6) finishPass();
+    } else if (state.op === 'drill') {
+        // both the drill and the boring bar feed along the axis
+        const stop = xAt(barEndIndex());          // the boring bar works out to the end
+        if (isDrilling()) {
+            state.toolX = Math.max(holeStart(), state.toolX - rate);
+            cutting = openBore(state.toolX, xAt(barEndIndex()), DRILL_D / 2);
+            state.cut = xAt(barEndIndex()) - state.toolX;
+            if (state.toolX <= holeStart() + 1e-6) finishPass();
+        } else {
+            state.toolX = Math.min(stop, state.toolX + rate);
+            cutting = openBore(holeStart(), state.toolX, state.toolR);
+            state.cut = state.toolX - holeStart();
+            if (state.toolX >= stop - 1e-6) finishPass();
+        }
+    } else {
+        // facing and parting both feed inwards, toward the axis
+        state.toolR = Math.max(0, state.toolR - rate);
+        if (state.op === 'face') {
+            cutting = removeAt(state.toolX, BAR_L, state.toolR);
+        } else {
+            cutting = removeAt(PART_X, PART_X + PART_W, state.toolR);
+        }
+        state.cut = maxRadius() - state.toolR;
+        if (state.toolR <= 1e-6) finishPass();
+    }
+    // removeAt only reports TRUE on the tick where a sample of the bar
+    // actually changes, and the tool crosses a sample about once every
+    // sixty ticks — so `cutting` was true about 2% of the time while
+    // turning. Everything hung off it suffered: the elapsed timer ran at
+    // a fiftieth of real time, chips barely appeared, and the stall
+    // detector almost never got a look in. What matters is whether the
+    // tool is engaged, so it holds for a moment after each bite.
+    if (cutting) state.cutIdle = 0; else state.cutIdle += dt;
+    state.cutting = state.cutIdle < 0.35;
+    if (state.cutting) {
+        state.elapsed += dt;
+        if (cutting) barDirty = true;
+        if (Math.random() < dt * 34) spawnChip();
+    }
+}
+
+function finishPass() {
+    state.running = false;
+    state.done = true;
+    state.passes++;
+    state.cutting = false; state.cutIdle = 9;
+    state.power = false;                    // job done, switch off
+    state.startT = 1;                       // the next pass starts up afresh
+    if (state.op === 'part') dropOffcut();
+    barDirty = true;
+    paintRun();
+}
+
+// when a parting cut goes right through, the piece beyond it comes off
+function dropOffcut() {
+    const i0 = clamp(Math.ceil(PART_X / dx()), 0, NSEG);
+    let any = false;
+    for (let i = i0; i <= NSEG; i++) if (rad[i] > 0.06) any = true;
+    if (!any || offcut) return;
+    const pts = [new THREE.Vector2(0, 0)];
+    let end = i0;
+    for (let i = NSEG; i >= i0; i--) if (rad[i] > 0.06) { end = i; break; }
+    for (let i = i0; i <= end; i++) pts.push(new THREE.Vector2(Math.max(0.05, rad[i]), xAt(i) - xAt(i0)));
+    pts.push(new THREE.Vector2(0.05, xAt(end) - xAt(i0)));
+    offcutR = pts.reduce((m, q) => Math.max(m, q.x), 0);   // so it can rest ON the pan
+    const g = new THREE.LatheGeometry(pts, 40).rotateZ(-Math.PI / 2);
+    const om = workMesh.material.clone();
+    om.vertexColors = false;
+    om.color = new THREE.Color(M().skin[0], M().skin[1], M().skin[2]);
+    offcut = new THREE.Mesh(g, om);
+    offcutDown = false;
+    offcut.position.set(xAt(i0), AXIS_Y, 0);
+    offcut.castShadow = true;
+    scene.add(offcut);
+    offcutV = 0;
+    for (let i = i0; i <= NSEG; i++) rad[i] = 0;
+}
+// The parted piece tumbles into the pan and settles there. It is swept
+// about its parted END, not its middle, so while it is turning it
+// reaches a whole length away from its own axis — which is why it has
+// to stop turning and lie down before it can rest on the pan floor.
+function stepOffcut(dt) {
+    if (!offcut) return;
+    const rest = PAN_TOP + offcutR;
+    if (!offcutDown) {
+        offcutV -= 1400 * dt;
+        offcut.position.y += offcutV * dt;
+        offcut.rotation.z += 1.6 * dt;
+        if (offcut.position.y <= rest) {
+            offcut.position.y = rest; offcutV = 0; offcutDown = true;
+        }
+    } else {
+        // it clatters flat over about a fifth of a second
+        const flat = Math.round(offcut.rotation.z / (Math.PI * 2)) * Math.PI * 2;
+        offcut.rotation.z += (flat - offcut.rotation.z) * Math.min(1, dt * 14);
+        offcut.position.y = rest;
+    }
+}
+function clearOffcut() {
+    if (!offcut) return;
+    scene.remove(offcut);
+    offcut.geometry.dispose(); offcut.material.dispose();
+    offcut = null;
+}
+
+// =============================================================
+//  Drawing one frame
+// =============================================================
+function update3D() {
+    if (!gl) return;
+    spindleGrp.rotation.x = state.spinShown;
+    // the motor end of the belt, turning faster by exactly the ratio of
+    // the two pulleys — which is the whole point of putting it in sight
+    if (moPulley) moPulley.rotation.x = state.spinShown * BELT_RATIO;
+    // the gearbox knobs: the first is thrown over as the drive goes in,
+    // the second indexes round to whichever of the six gears is chosen
+    if (gearKnobs.length) {
+        gearKnobs[0].rotation.y = state.gear * 1.15;
+        gearKnobs[1].rotation.y = -state.speed / (SPEEDS.length - 1) * 4.2;
+    }
+    // The instruments. A needle has mass, so both are eased rather than
+    // snapped, and the ammeter shows the motor's whole draw: what the
+    // cut is taking, divided by the efficiency, plus what it pulls doing
+    // nothing at all.
+    if (voltNeedle) {
+        const cutting = state.running && state.cutting && !state.stalled;
+        const load = clamp(cutting ? cutPower() / availPower() : 0, 0, 1.6);
+        const wantV = 235 - 18 * load;
+        const wantA = (state.spinRpm > 20 ? 1.1 : 0)
+                    + (cutting ? cutPower() / DRIVE_EFF / 230 : 0);
+        shownVolts += (wantV - shownVolts) * 0.06;
+        shownAmps  += (wantA - shownAmps) * 0.06;
+        const sweep = f => (0.5 - clamp(f, 0, 1)) * 4.189;
+        voltNeedle.rotation.z = sweep(shownVolts / 300);
+        ampNeedle.rotation.z  = sweep(shownAmps / 6);
+    }
+    runBelt();                         // and the belt travels with them
+    // the jaws close on whatever bar is in the chuck
+    // Mounting a new bar, in the order it actually happens: the jaws
+    // wind back, the bar is pushed in through the chuck from the far
+    // end, and only then do the jaws close down on it.
+    const s = clamp(state.setupT, 0, 1);
+    const opening = ease(clamp(s / 0.26, 0, 1));
+    const closing = ease(clamp((s - 0.62) / 0.38, 0, 1));
+    const jawOpen = opening * (1 - closing);           // out, hold, in
+    // Lowered in from above and laid in the open jaws, the way a bar is
+    // actually put in a chuck — not fired in along the axis.
+    const drop = (1 - ease(clamp((s - 0.24) / 0.42, 0, 1))) * LOAD_UP;
+    if (workGrp) workGrp.position.set(0, drop, 0);
+
+    const jr = P.dia / 2 + JAW_REACH + jawOpen * JAW_OPEN;
+    chuckJaws.forEach(j => {
+        j.position.set(0, Math.cos(j.userData.a) * jr, Math.sin(j.userData.a) * jr);
+        j.rotation.x = j.userData.a;
+    });
+    // the saddle carries the tool along the bed; the cross-slide sets
+    // how deep it is in. Those are the two handles on a real lathe.
+    tailGrp.position.x = state.tailX;
+    saddleGrp.position.x = state.toolX;
+    // Every handwheel is geared to something that moves, so its angle
+    // is not animated — it is READ OFF the position of the slide it
+    // drives. That way it turns the right way, at the right rate, in
+    // both directions, without anything to keep in step.
+    if (hWheelObj) hWheelObj.userData.spin.rotation.z =
+        -state.toolX / LEAD_CARRIAGE * Math.PI * 2;
+    if (cWheelObj) cWheelObj.userData.spin.rotation.z =
+        state.toolR / LEAD_CROSS * Math.PI * 2;
+    if (tWheelObj) tWheelObj.userData.spin.rotation.z =
+        -state.tailX / LEAD_TAIL * Math.PI * 2;
+    crossGrp.position.z = state.toolR;   // the edge sits exactly on the cut radius
+    // whichever tool the job calls for, and only that one
+    const op = state.op, drilling = isDrilling();
+    if (partGrp) partGrp.visible = op === 'part';
+    // The moment a drilling pass ends the machine knows the next one
+    // will be a boring pass — but the tailstock is still out with the
+    // drill in the hole. Swapping the tools there put the boring bar
+    // straight through the drill, so the drill stays until the
+    // tailstock has actually come home.
+    const tailOut = Math.abs(state.tailX - TAIL_X) > 6;
+    if (boreGrp) boreGrp.visible = op === 'drill' && !drilling && !tailOut;
+    if (drillGrp) drillGrp.visible = op === 'drill' && (drilling || tailOut);
+    if (toolGrp) toolGrp.visible = op === 'turn' || op === 'face' || op === 'thread';
+
+    if (barDirty) buildBar();
+
+    if (lampMesh) {
+        const bad = state.stalled;
+        if (!state.power || state.setupT < 1) {
+            MAT.lamp.color.setHex(0x2c3138);
+            MAT.lamp.emissive.setHex(0x161a1f);
+            MAT.lamp.emissiveIntensity = 0.25;
+        } else {
+            MAT.lamp.color.setHex(bad ? 0x8f1c1c : 0x1c8f4a);
+            MAT.lamp.emissive.setHex(bad ? 0xef4444 : 0x22c55e);
+            MAT.lamp.emissiveIntensity = bad ? 1.4 : 1.1;
+        }
+    }
+    controls.update();
+    renderer.render(scene, camera);
+    if (state.parts) layoutParts();
+}
+
+const VIEWS = {
+    bench: { pos: [780, 760, 980],  tgt: [60, 250, 0] },
+    // From the far side of the machine. The near side puts the carriage
+    // and toolpost squarely between you and the cut — from here the bar
+    // is 90% in view and the cutting point is clear.
+    all:   { pos: [330, 470, -470], tgt: [55, 296, 0] },
+    tool:  { pos: [150, 372, 230],  tgt: [62, 300, 18] },
+    front: { pos: [60, 330, 900],   tgt: [60, 285, 0] },
+    end:   { pos: [560, 380, 60],   tgt: [-20, 300, 0] }
+};
+let camFrom = null, camTo = null, camT = 1;
+function setView(name) {
+    const v = VIEWS[name];
+    if (!v || !gl) return;
+    camFrom = { pos: camera.position.clone(), tgt: controls.target.clone() };
+    camTo = { pos: new THREE.Vector3().fromArray(v.pos), tgt: new THREE.Vector3().fromArray(v.tgt) };
+    camT = 0;
+}
+function advanceCamera(real) {
+    if (!gl) return;
+    if (camT < 1) {
+        camT = Math.min(1, camT + real / 0.8);
+        const e = ease(camT);
+        camera.position.lerpVectors(camFrom.pos, camTo.pos, e);
+        controls.target.lerpVectors(camFrom.tgt, camTo.tgt, e);
+    }
+    controls.autoRotate = state.turntable && camT >= 1;
+}
+const ease = t => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+
+function applyMesh() {
+    if (!gl) return;
+    const on = state.mesh;
+    scene.traverse(o => {
+        if (!o.isMesh || !o.material) return;
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        ms.forEach(m => { if ('wireframe' in m) m.wireframe = on; });
+    });
+}
+function applyTheme() {
+    if (!gl) return;
+    const dark = state.viewMode === 'blueprint';
+    scene.background.setHex(dark ? 0x0f172a : 0xf1f5f9);
+    floor3.material.color.setHex(dark ? 0x131c2e : 0xdbe1ea);
+    grid3.material.color.setHex(dark ? 0x1e293b : 0xcbd5e1);
+}
+function resizeView() {
+    const r = $('view3d').getBoundingClientRect();
+    const w = Math.max(1, r.width), h = Math.max(1, r.height);
+    if (gl) { camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); }
+    const gc = $('graph');
+    if (gc) { gc.width = 300; gc.height = 150; drawGraph(); }
+}
+window.addEventListener('resize', resizeView);
+
+// =============================================================
+//  Readings
+// =============================================================
+function updateStats() {
+    $('stat-rpm').textContent = rpm().toFixed(0);
+    $('stat-vc').textContent = cutSpeed().toFixed(1);
+    $('stat-force').textContent = cutForce().toFixed(0);
+    $('stat-power').textContent = cutPower().toFixed(0);
+    $('stat-dia').textContent = liveDia().toFixed(1);
+    // while threading the feed is geared to the spindle, so show the
+    // pitch that is actually being cut rather than the knob's setting
+    const thr = state.op === 'thread';
+    $('v-feed').textContent = thr ? threadPitch().toFixed(2) : P.feed.toFixed(2);
+    $('s-feed').disabled = thr;
+    $('s-feed').style.opacity = thr ? 0.4 : 1;
+    $('lbl-feed').textContent = thr ? 'Pitch (geared)' : 'Feed';
+    const fast = speedRatio() > 1.35, slowc = speedRatio() < 0.45;
+    $('stat-vc').className = (fast || slowc)
+        ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold';
+    $('stat-power').className = overloaded()
+        ? 'text-rose-600 font-bold' : 'text-amber-600 font-bold';
+    paintAlarm();
+    if (state.trace) drawGraph();
+}
+
+// Three things go wrong on a lathe, each for its own reason.
+function paintAlarm() {
+    const box = $('alarm');
+    let title = '', body = '', tone = '';
+    const ratio = speedRatio();
+    // Order matters: the most specific thing that is wrong should be
+    // what it says. Winding the gear up in steel overloads the motor,
+    // but "too fast for mild steel" tells you far more than "too heavy
+    // a cut" does.
+    const bogged = state.running && state.cutting && overloaded();
+    if (bogged) {
+        title = 'Stalled.';
+        body = 'This cut wants ' + cutPower().toFixed(0) + ' W and the motor has '
+             + availPower().toFixed(0) + '. The chip is ' + P.feed.toFixed(2) + ' by '
+             + P.depth.toFixed(2) + ' mm — take less depth or a finer feed.';
+        tone = 'bg-amber-50 border-amber-300 text-amber-800';
+    } else if (state.op === 'thread' && cutSpeed() > M().vc * 0.55) {
+        title = 'Too fast to cut a thread.';
+        body = 'The tool has to be pulled out cleanly at the end of every pass, and at '
+             + cutSpeed().toFixed(0) + ' m/min there is no time to. Threading is done at '
+             + 'half of turning speed or less — try position A or B.';
+        tone = 'bg-orange-50 border-orange-300 text-orange-800';
+    } else if (ratio > 1.35) {
+        title = 'Too fast for ' + M().name + '.';
+        body = 'The edge is doing ' + cutSpeed().toFixed(0) + ' m/min where ' + M().vc
+             + ' is wanted. At ⌀' + liveDia().toFixed(0) + ' mm the right speed is about '
+             + idealRpm().toFixed(0) + ' rpm — change down.';
+        tone = 'bg-orange-50 border-orange-300 text-orange-800';
+    } else if (overloaded()) {
+        // set before the cut has even been started: the chip itself is
+        // more than the motor can carry, whatever the speed
+        title = 'Too heavy a cut.';
+        body = 'This cut wants ' + cutPower().toFixed(0) + ' W and the motor has '
+             + availPower().toFixed(0) + '. The chip is ' + P.feed.toFixed(2) + ' by '
+             + P.depth.toFixed(2) + ' mm — take less depth or a finer feed.';
+        tone = 'bg-amber-50 border-amber-300 text-amber-800';
+    } else if (ratio < 0.45 && liveDia() > 3 && state.op === 'turn'
+               && (state.running || state.passes > 0)) {
+        title = 'Too slow now.';
+        body = 'The bar is down to ⌀' + liveDia().toFixed(0) + ' mm, so the edge has dropped to '
+             + cutSpeed().toFixed(0) + ' m/min. This is the lathe problem: the diameter fell and took '
+             + 'the cutting speed with it. About ' + idealRpm().toFixed(0) + ' rpm would put it right.';
+        tone = 'bg-sky-50 border-sky-300 text-sky-800';
+    }
+    box.classList.toggle('hidden', !title);
+    if (!title) return;
+    box.className = 'absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl '
+                  + 'border shadow-md text-[calc(13px*var(--fs))] text-center max-w-lg ' + tone;
+    $('alarm-title').textContent = title;
+    $('alarm-body').textContent = body;
+}
+
+// The graph is the point of the whole simulation in one picture:
+// cutting speed against diameter is a straight line through the origin,
+// and every pass walks you down it toward zero.
+function drawGraph() {
+    const cv = $('graph');
+    if (!cv) return;
+    const g = cv.getContext('2d');
+    const W = cv.width, H = cv.height, dark = state.viewMode === 'blueprint';
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = dark ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.88)';
+    g.fillRect(0, 0, W, H);
+    g.strokeStyle = dark ? '#334155' : '#cbd5e1'; g.lineWidth = 1;
+    g.strokeRect(0.5, 0.5, W - 1, H - 1);
+    const L = 34, B = H - 22, R = W - 8, T = 16;
+    const maxD = 75, maxV = Math.max(M().vc * 1.8, Math.PI * maxD * rpm() / 1000);
+    const px = d => L + (d / maxD) * (R - L);
+    const py = v => B - (v / maxV) * (B - T);
+    // the speed this material wants
+    g.strokeStyle = '#10b981'; g.setLineDash([4, 3]); g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(L, py(M().vc)); g.lineTo(R, py(M().vc)); g.stroke();
+    g.setLineDash([]);
+    // Vc = pi D n : a straight line from the origin, one per gear
+    SPEEDS.forEach((n, i) => {
+        const on = i === state.speed;
+        g.strokeStyle = on ? '#0ea5e9' : (dark ? '#334155' : '#e2e8f0');
+        g.lineWidth = on ? 2.2 : 1;
+        g.beginPath(); g.moveTo(px(0), py(0));
+        g.lineTo(px(maxD), py(Math.PI * maxD * n / 1000)); g.stroke();
+    });
+    // where the cut is right now
+    const d = liveDia(), v = cutSpeed();
+    if (d <= maxD && v <= maxV) {
+        g.fillStyle = '#ef4444';
+        g.beginPath(); g.arc(px(d), py(v), 4.5, 0, 7); g.fill();
+    }
+    g.fillStyle = dark ? '#94a3b8' : '#64748b';
+    g.font = '10px Inter, sans-serif';
+    g.fillText('Vᴄ m/min', 4, 11);
+    g.fillText('⌀ mm', R - 34, H - 7);
+    g.fillText(M().vc + ' wanted', L + 4, py(M().vc) - 3);
+    g.fillText('0', L - 8, B + 4);
+    g.fillText(String(maxD), R - 12, B + 12);
+}
+
+// =============================================================
+//  Sound
+// =============================================================
+const aMotor = $('a-motor'), aCut = $('a-cut'), aPlace = $('a-place'), aBolt = $('a-bolt');
+const PITCH_REF = 700;                  // the rpm the clips sit at
+let motorOn = false, motorVol = 0, cutOn = false, cutVol = 0;
+let setupCue = 2;
+[aMotor, aCut].forEach(a => {
+    if (a) a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = false;
+});
+function cue(el) {
+    if (!el || !state.sound) return;
+    try { el.currentTime = 0; el.volume = 0.85; el.play().catch(() => {}); } catch (e) {}
+}
+function soundUpdate(real) {
+    const byT = state.fast ? 1.5 : state.slow ? 0.7 : 1;
+    if (aMotor) {
+        const wantM = state.sound && state.setupT >= 1 && (state.power || state.spinRpm > 25);
+        const spun = clamp(state.spinRpm / Math.max(1, rpm()), 0, 1);
+        const mT = !wantM ? 0 : state.stalled ? 0.30 : 0.07 + 0.17 * spun;
+        const mR = state.stalled ? clamp(0.45 * byT, 0.34, 2.5)
+                                 : clamp(state.spinRpm / PITCH_REF * byT, 0.34, 2.5);
+        if (wantM && !motorOn) {
+            motorOn = true; motorVol = 0;
+            try { aMotor.volume = 0; aMotor.play().catch(() => {}); } catch (e) {}
+        }
+        if (motorOn) {
+            motorVol += (mT - motorVol) * Math.min(1, real * 14);
+            try { aMotor.volume = clamp(motorVol, 0, 1); aMotor.playbackRate = mR; } catch (e) {}
+            if (!wantM && motorVol < 0.02) { motorOn = false; try { aMotor.pause(); } catch (e) {} }
+        }
+    }
+    if (!aCut) return;
+    const want = state.sound && state.running && state.cutting && state.setupT >= 1;
+    let cT = 0, cR = 1;
+    if (want) {
+        if (state.stalled) { cT = 0.32; cR = clamp(0.45 * byT, 0.34, 2.5); }
+        else {
+            const load = clamp(cutPower() / availPower(), 0, 1);
+            cT = 0.38 + 0.42 * load;
+            cR = clamp(cutSpeed() / 45 * byT, 0.34, 2.5);
+        }
+    }
+    if (want && !cutOn) {
+        cutOn = true; cutVol = 0;
+        try { aCut.volume = 0; aCut.play().catch(() => {}); } catch (e) {}
+    }
+    if (!cutOn) return;
+    cutVol += (cT - cutVol) * Math.min(1, real * 26);
+    try { aCut.volume = clamp(cutVol, 0, 1); aCut.playbackRate = cR; } catch (e) {}
+    if (!want && cutVol < 0.02) { cutOn = false; try { aCut.pause(); } catch (e) {} }
+}
+function soundStop() {
+    cutOn = false; cutVol = 0;
+    if (aCut) { try { aCut.pause(); aCut.currentTime = 0; aCut.volume = 0; } catch (e) {} }
+}
+function soundAllStop() {
+    soundStop(); motorOn = false; motorVol = 0;
+    [aMotor, aPlace, aBolt].forEach(a => {
+        if (a) { try { a.pause(); a.volume = 0; } catch (e) {} }
+    });
+}
+
+// =============================================================
+//  Loop
+// =============================================================
+const SETUP_T = 2.1;
+const START_T = 1.9;                  // motor up, drive engaged, then feed                  // open, load, clamp
+const DT = 1 / 240;
+let acc = 0, last = performance.now();
+function frame(now) {
+    const real = Math.min((now - last) / 1000, 0.05); last = now;
+    const scale = state.fast ? 4 : state.slow ? 0.25 : 1;
+    acc += real * scale;
+    advanceCamera(real);
+    let guard = 0;
+    while (acc >= DT && guard++ < 3000) {
+        step(DT); stepChips(DT); stepOffcut(DT); acc -= DT;
+    }
+    soundUpdate(real);
+    updateStats();
+    update3D();
+    requestAnimationFrame(frame);
+}
+
+// Slide the belt's teeth round the loop. The distance the belt runs is
+// the spindle's angle times the radius its teeth mesh at — so the belt
+// and the wheels stay in step however fast the spindle is drawn.
+const _bp = new THREE.Vector3(), _bt = new THREE.Vector3();
+function runBelt() {
+    if (!beltPath || !beltTeeth.length) return;
+    const adv = state.spinShown * beltPitchR;
+    for (const t of beltTeeth) {
+        let s = (t.userData.s + adv) % beltLen;
+        if (s < 0) s += beltLen;
+        const u = s / beltLen;
+        beltPath.getPointAt(u, _bp);
+        t.position.set(beltX, _bp.y, _bp.z);
+    }
+}
+
+// =============================================================
+//  Part names
+// =============================================================
+// Anchors are real points in the scene, taken through each part's own
+// transform, so a label follows the carriage or the tailstock as it
+// moves instead of being pinned to a spot on the glass. `pri` decides
+// who survives when the window is too short to list everybody.
+const PARTS = [
+    { n: 'Headstock',      pri: 9, p: () => new THREE.Vector3(-250, AXIS_Y + 30, 60) },
+    { n: 'Gear controls',  pri: 6, p: () => gearKnobs.length
+            ? gearKnobs[0].getWorldPosition(new THREE.Vector3()) : null },
+    { n: 'Panel meters',   pri: 4, p: () => voltNeedle
+            ? voltNeedle.parent.getWorldPosition(new THREE.Vector3()) : null },
+    { n: 'Speed chart',    pri: 3, p: () => new THREE.Vector3(-271, AXIS_Y - 4, 82) },
+    { n: 'Motor',          pri: 6, p: () => new THREE.Vector3(-236, AXIS_Y - 34, -196) },
+    { n: 'Spindle nose',   pri: 4, p: () => new THREE.Vector3(-86, AXIS_Y + 36, 0) },
+    { n: 'Three-jaw chuck',pri: 10, p: () => new THREE.Vector3(-46, AXIS_Y + 88, 0) },
+    { n: 'Chuck jaws',     pri: 5, p: () => chuckJaws.length
+            ? chuckJaws[0].getWorldPosition(new THREE.Vector3()) : null },
+    { n: 'Workpiece',      pri: 10, p: () => new THREE.Vector3(60, AXIS_Y + radiusAt(60) + 4, 0) },
+    { n: 'Cutting tool',   pri: 10, p: () => {
+            const g = boreGrp && boreGrp.visible ? boreGrp
+                    : partGrp && partGrp.visible ? partGrp
+                    : toolGrp && toolGrp.visible ? toolGrp : null;
+            return g ? g.localToWorld(new THREE.Vector3(0, AXIS_Y + 8, 8)) : null; } },
+    { n: 'Toolpost',       pri: 9, p: () => toolGrp && toolGrp.visible
+            ? toolGrp.localToWorld(new THREE.Vector3(TRAIL_X, COMP_TOP + 30, POST_Z0 + 32))
+            : partGrp.localToWorld(new THREE.Vector3(PART_W / 2, COMP_TOP + 30, POST_Z0 + 32)) },
+    { n: 'Compound slide', pri: 7, p: () =>
+            crossGrp.localToWorld(new THREE.Vector3(TRAIL_X, COMP_TOP - 9, COMP_Z0 + 96)) },
+    { n: 'Cross slide',    pri: 8, p: () =>
+            crossGrp.localToWorld(new THREE.Vector3(0, CROSS_TOP - 11, 70)) },
+    { n: 'Cross-slide handwheel', pri: 7, p: () =>
+            cWheelObj.getWorldPosition(new THREE.Vector3()) },
+    { n: 'Saddle (carriage)', pri: 8, p: () =>
+            saddleGrp.localToWorld(new THREE.Vector3(0, BED_TOP + 30, 70)) },
+    { n: 'Carriage handwheel', pri: 7, p: () =>
+            hWheelObj.getWorldPosition(new THREE.Vector3()) },
+    { n: 'Leadscrew',      pri: 5, p: () => new THREE.Vector3(180, BED_TOP - 34, 100) },
+    { n: 'Bed',            pri: 8, p: () => new THREE.Vector3(210, BED_TOP + 6, 96) },
+    { n: 'Chip pan',       pri: 4, p: () => new THREE.Vector3(140, 172, 130) },
+    { n: 'Feed gearbox',   pri: 6, p: () => new THREE.Vector3(HEAD_X0 + 96, 200, 130) },
+    { n: 'Motor pulley',   pri: 7, p: () => new THREE.Vector3(-316, AXIS_Y - 34, -172) },
+    { n: 'Drive belts',    pri: 8, p: () => new THREE.Vector3(-318, AXIS_Y - 66, -78) },
+    { n: 'Spindle pulley', pri: 8, p: () => new THREE.Vector3(-316, AXIS_Y + 58, 0) },
+    { n: 'Belt guard',     pri: 4, p: () => state.guard
+            ? new THREE.Vector3(-320, 392, 60) : null },
+    { n: 'Pedestal stand', pri: 5, p: () => new THREE.Vector3(-215, 70, 108) },
+    { n: 'Tailstock',      pri: 9, p: () =>
+            tailGrp.localToWorld(new THREE.Vector3(6, AXIS_Y + 52, 0)) },
+    { n: 'Tailstock barrel', pri: 6, p: () =>
+            tailGrp.localToWorld(new THREE.Vector3(-72, AXIS_Y + 23, 0)) },
+    { n: 'Tailstock handwheel', pri: 6, p: () =>
+            tWheelObj.getWorldPosition(new THREE.Vector3()) }
+];
+const PART_INK = '#ea7317';
+let partEls = null;
+function buildPartLabels() {
+    const host = $('parts'), svg = $('parts-svg'), NS = 'http://www.w3.org/2000/svg';
+    partEls = PARTS.map(pt => {
+        const d = document.createElement('div');
+        d.className = 'plab'; d.textContent = pt.n; host.appendChild(d);
+        const ln = document.createElementNS(NS, 'line');
+        ln.setAttribute('stroke', PART_INK);
+        ln.setAttribute('stroke-width', '1.5');
+        ln.setAttribute('stroke-linecap', 'round');
+        svg.appendChild(ln);
+        const dot = document.createElementNS(NS, 'circle');
+        dot.setAttribute('r', '3.4');
+        dot.setAttribute('fill', PART_INK);
+        svg.appendChild(dot);
+        return { d, ln, dot, w: 0 };
+    });
+}
+function layoutParts() {
+    if (!partEls) buildPartLabels();
+    const W = renderer.domElement.clientWidth, H = renderer.domElement.clientHeight;
+    // PAD has to clear HALF a label, not none of it: the labels are
+    // centred on their y, so a 10 px margin still let the last one hang
+    // over the bottom edge by its own half-height.
+    const PAD = 17, ROW = 34;
+    const hide = E => { E.d.style.display = 'none';
+                        E.ln.style.display = 'none'; E.dot.style.display = 'none'; };
+    // where each anchor lands on the glass
+    const live = [];
+    PARTS.forEach((pt, i) => {
+        let v = null;
+        try { v = pt.p(); } catch (e) { v = null; }
+        if (!v) { hide(partEls[i]); return; }
+        const q = v.project(camera);
+        if (q.z > 1) { hide(partEls[i]); return; }     // behind the camera
+        const sx = (q.x * 0.5 + 0.5) * W, sy = (-q.y * 0.5 + 0.5) * H;
+        if (sx < -60 || sx > W + 60 || sy < -30 || sy > H + 30) { hide(partEls[i]); return; }
+        live.push({ i, sx, sy, pri: pt.pri, side: 0 });
+    });
+    // Split on the median anchor rather than the middle of the window.
+    // The lathe rarely sits centred in frame, and a fixed midpoint puts
+    // three quarters of the names down one edge.
+    const xs = live.map(o => o.sx).sort((a, b) => a - b);
+    const mid = xs.length ? xs[xs.length >> 1] : W * 0.5;
+    live.forEach(o => o.side = o.sx < mid ? 0 : 1);
+    // stack each side down its own edge, nearest to where it points
+    const placed = {};
+    [0, 1].forEach(side => {
+        let col = live.filter(o => o.side === side).sort((a, b) => a.sy - b.sy);
+        const cap = Math.max(1, Math.floor((H - 2 * PAD) / ROW));
+        if (col.length > cap) {                       // the least important go
+            const keep = col.slice().sort((a, b) => b.pri - a.pri || a.sy - b.sy)
+                            .slice(0, cap).map(o => o.i);
+            col.filter(o => keep.indexOf(o.i) < 0).forEach(o => hide(partEls[o.i]));
+            col = col.filter(o => keep.indexOf(o.i) >= 0);
+        }
+        let y = PAD;
+        col.forEach(o => { o.ly = Math.max(y, Math.min(o.sy, H - PAD)); y = o.ly + ROW; });
+        // If the run overshot the bottom, re-pack it UPWARD from the
+        // bottom edge. Sliding the whole run up and clamping at the top
+        // margin instead piled the first few on top of one another,
+        // which is exactly what the spacing was supposed to prevent.
+        if (y - ROW > H - PAD) {
+            let yy = H - PAD;
+            for (let i = col.length - 1; i >= 0; i--) {
+                col[i].ly = Math.min(col[i].ly, yy);
+                yy = col[i].ly - ROW;
+            }
+        }
+        col.forEach(o => placed[o.i] = o);
+    });
+    // Hang the two columns off the sides of the MACHINE, not the sides
+    // of the window. Pinned to the window, a wide screen stretches every
+    // leader across the empty half of the frame and they cross into a
+    // web. Butted up against the machine they stay short and read as
+    // pointing at one part each.
+    let wide = 0;
+    live.forEach(o => { const E = partEls[o.i];
+                        if (!E.w) E.w = E.d.offsetWidth;
+                        if (E.w > wide) wide = E.w; });
+    const GUT = 44;
+    let bx0 = W, bx1 = 0;
+    live.forEach(o => { if (o.sx < bx0) bx0 = o.sx; if (o.sx > bx1) bx1 = o.sx; });
+    const lEdge = clamp(bx0 - GUT, PAD + wide, W * 0.55);   // left names END here
+    const rEdge = clamp(bx1 + GUT, W * 0.45, W - PAD - wide); // right names START here
+    live.forEach(o => {
+        const E = partEls[o.i], put = placed[o.i];
+        if (!put) return;
+        E.d.style.display = ''; E.ln.style.display = ''; E.dot.style.display = '';
+        E.d.classList.toggle('r', o.side === 0);        // the left column is right-aligned
+        E.d.style.top = put.ly + 'px';
+        E.d.style.left = (o.side ? rEdge : lEdge) + 'px';
+        const from = o.side ? rEdge - 6 : lEdge + 6;
+        E.ln.setAttribute('x1', from); E.ln.setAttribute('y1', put.ly);
+        E.ln.setAttribute('x2', o.sx); E.ln.setAttribute('y2', o.sy);
+        E.dot.setAttribute('cx', o.sx); E.dot.setAttribute('cy', o.sy);
+    });
+}
+
+// =============================================================
+//  Controls
+// =============================================================
+function reset(showSetup) {
+    state.running = false; state.done = false; state.cutting = false;
+    state.stalled = false; state.power = false;
+    state.passes = 0; state.cut = 0; state.elapsed = 0;
+    // Loading a bar is only worth watching when a DIFFERENT bar is
+    // going in. Reset the same stock and you get fresh metal without
+    // sitting through the jaws opening and closing again.
+    const sameStock = mounted.mat === state.mat
+                   && Math.abs((mounted.dia || 0) - P.dia) < 0.01;
+    const load = !!showSetup && !sameStock;
+    // Only swap the bar once the spindle has actually stopped. Doing it
+    // at once threw the workpiece 200 mm into the air and left it
+    // revolving outside the chuck while the spindle ran down.
+    state.pendingSetup = load && state.spinRpm > 4;
+    state.setupT = (load && !state.pendingSetup) ? 0 : 1;
+    setupCue = (load && !state.pendingSetup) ? 0 : 2;
+    soundStop();
+    if (gl) { clearChips(); clearOffcut(); if (!state.pendingSetup) newStock(); }
+    state.homing = true;              // wind back rather than jump back
+    state.startT = 1; state.gear = 0;
+    paintRun();
+}
+function bindSlider(id, key, fmt, after) {
+    const el = $(id);
+    el.addEventListener('input', () => {
+        P[key] = parseFloat(el.value);
+        $(id.replace('s-', 'v-')).textContent = fmt(P[key]);
+        if (after) after();
+    });
+}
+bindSlider('s-feed', 'feed', v => v.toFixed(2));
+bindSlider('s-depth', 'depth', v => v.toFixed(2));
+bindSlider('s-dia', 'dia', v => v.toFixed(0), () => reset());
+
+function paintOps() {
+    document.querySelectorAll('.oseg').forEach(b =>
+        b.classList.toggle('on', b.dataset.op === state.op));
+}
+document.querySelectorAll('.oseg').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.op === state.op) return;
+    state.op = b.dataset.op;
+    paintOps();
+    Object.assign(P, { feed: DEFAULTS.feed, depth: DEFAULTS.depth });
+    autoSet();                        // set up for the job just chosen
+    // Fresh metal for a new job. Carrying the old surface over left a
+    // finished thread standing on a bar that was then parted through,
+    // and a bored bar being turned on the outside — shapes no single
+    // operation could have produced. Same stock, so no reloading
+    // animation: the bar is simply new.
+    reset(true);
+}));
+
+function paintMats() {
+    document.querySelectorAll('.mseg').forEach(b =>
+        b.classList.toggle('on', b.dataset.mat === state.mat));
+}
+document.querySelectorAll('.mseg').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.mat === state.mat) return;
+    state.mat = b.dataset.mat;
+    paintMats();
+    Object.assign(P, { feed: DEFAULTS.feed, depth: DEFAULTS.depth });
+    autoSet();                        // and for the metal just chosen
+    reset(true);
+}));
+
+// the gearbox positions, built from the speed table so the two cannot
+// fall out of step
+SPEEDS.forEach((n, i) => {
+    const b = document.createElement('button');
+    b.className = 'sseg px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 '
+                + 'text-[calc(11px*var(--fs))] font-bold transition';
+    b.dataset.speed = i;
+    b.textContent = String.fromCharCode(65 + i);
+    $('speed-row').appendChild(b);
+});
+function paintSpeeds() {
+    document.querySelectorAll('.sseg').forEach(b => {
+        const i = +b.dataset.speed;
+        b.classList.toggle('on', i === state.speed);
+        b.title = 'Position ' + String.fromCharCode(65 + i) + ': ' + SPEEDS[i]
+                + ' rpm — at ⌀' + liveDia().toFixed(0) + ' mm that is '
+                + (Math.PI * liveDia() * SPEEDS[i] / 1000).toFixed(0) + ' m/min';
+    });
+}
+document.querySelectorAll('.cseg').forEach(b => b.addEventListener('click', () => {
+    state.spinView = b.dataset.spin;
+    document.querySelectorAll('.cseg').forEach(o =>
+        o.classList.toggle('on', o.dataset.spin === state.spinView));
+}));
+document.querySelectorAll('.sseg').forEach(b => b.addEventListener('click', () => {
+    state.speed = +b.dataset.speed;
+    paintSpeeds();
+    if (gl) drawSpeeds();
+}));
+
+function paintRun() {
+    const b = $('btn-run');
+    const on = ['bg-slate-900', 'text-white', 'border-slate-900'];
+    const off = ['bg-white', 'text-slate-900', 'border-slate-200', 'hover:bg-slate-50'];
+    on.forEach(c => b.classList.toggle(c, !state.running));
+    off.forEach(c => b.classList.toggle(c, state.running));
+    const label = state.running ? 'Stop'
+        : state.op === 'turn' ? (state.passes ? 'Another Pass' : 'Cut')
+        : state.op === 'face' ? (state.passes ? 'Face Again' : 'Face')
+        : state.op === 'thread' ? (threadCut > 0.02 ? 'Deeper Pass' : 'Cut Thread')
+        : state.op === 'drill' ? (isDrilling() ? 'Drill' : 'Bore Out')
+        : (state.passes ? 'Part Again' : 'Part Off');
+    $('run-label').textContent = label;
+    $('btn-run').disabled = state.op === 'part' && !!offcut;
+}
+$('btn-run').addEventListener('click', () => {
+    if (state.running) {
+        state.running = false; state.power = false;
+        state.cutting = false; state.stalled = false;
+        state.startT = 1;
+    }
+    else {
+        if (state.setupT < 1) { state.setupT = 1; setupCue = 2; }
+        if (state.op === 'part' && offcut) return;
+        startPass();
+        state.power = true;               // this click is what starts it
+        state.startT = 0;                 // and it starts up, rather than just going
+        state.running = true; state.done = false;
+    }
+    paintRun();
+});
+$('btn-reset').addEventListener('click', () => {
+    Object.assign(P, DEFAULTS);
+    ['feed', 'depth', 'dia'].forEach(k => {
+        $('s-' + k).value = DEFAULTS[k];
+        $('v-' + k).textContent = k === 'dia' ? DEFAULTS[k] : DEFAULTS[k].toFixed(2);
+    });
+    autoSet();
+    reset(true);
+});
+
+function paintChip(chip, on) {
+    ['bg-white', 'hover:bg-slate-50', 'text-slate-900', 'border-slate-200']
+        .forEach(c => chip.classList.toggle(c, on));
+    ['bg-slate-100', 'hover:bg-slate-200', 'text-slate-400', 'border-slate-200']
+        .forEach(c => chip.classList.toggle(c, !on));
+}
+function bindChip(chk, chip, key, after) {
+    $(chk).addEventListener('change', e => {
+        state[key] = e.target.checked;
+        paintChip($(chip), e.target.checked);
+        if (after) after(e.target.checked);
+    });
+}
+function setChip(key, on) {
+    const el = $('chk-' + key);
+    if (el.checked === on) return;
+    el.checked = on;
+    el.dispatchEvent(new Event('change'));
+}
+bindChip('chk-fast', 'chip-fast', 'fast', on => { if (on) setChip('slow', false); });
+bindChip('chk-slow', 'chip-slow', 'slow', on => { if (on) setChip('fast', false); });
+bindChip('chk-chips', 'chip-chips', 'chips', on => { if (!on) clearChips(); });
+bindChip('chk-sound', 'chip-sound', 'sound', on => { if (!on) soundAllStop(); });
+bindChip('chk-trace', 'chip-trace', 'trace', on => {
+    $('graph').classList.toggle('hidden', !on);
+    if (on) drawGraph();
+});
+bindChip('chk-mesh', 'chip-mesh', 'mesh', () => applyMesh());
+bindChip('chk-guard', 'chip-guard', 'guard', on => {
+    if (guardGrp) guardGrp.visible = on;
+});
+bindChip('chk-parts', 'chip-parts', 'parts', on => {
+    $('parts').classList.toggle('hidden', !on);
+    if (on && gl) layoutParts();
+});
+bindChip('chk-spin', 'chip-spin', 'turntable');
+
+function paintViews(name) {
+    document.querySelectorAll('.vseg').forEach(b =>
+        b.classList.toggle('on', b.dataset.view === name));
+}
+document.querySelectorAll('.vseg').forEach(b => b.addEventListener('click', () => {
+    setView(b.dataset.view); paintViews(b.dataset.view);
+}));
+
+function paintViewMode() {
+    const dark = state.viewMode === 'blueprint';
+    $('chk-view-mode').checked = dark;
+    $('txt-view-mode').textContent = dark ? 'Light' : 'Dark';
+    paintChip($('chip-view-mode'), dark);
+    applyTheme();
+    if (state.trace) drawGraph();
+}
+$('chk-view-mode').addEventListener('change', e => {
+    state.viewMode = e.target.checked ? 'blueprint' : 'light';
+    paintViewMode();
+});
+
+$('btn-info').addEventListener('click', () => $('info-modal').classList.remove('hidden'));
+$('btn-info-close').addEventListener('click', () => $('info-modal').classList.add('hidden'));
+$('info-modal').addEventListener('click', e => {
+    if (e.target === $('info-modal')) $('info-modal').classList.add('hidden');
+});
+window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') $('info-modal').classList.add('hidden');
+});
+
+function hideLoader() {
+    const el = document.getElementById('loader');
+    if (el) el.classList.add('gone');
+}
+
+window.onload = function () {
+    try {
+        init3D();
+        gl = true;
+        controls.addEventListener('start', () => paintViews(null));
+    } catch (e) {
+        console.warn('3D unavailable:', e);
+        const n = $('nogl');
+        n.classList.remove('hidden'); n.classList.add('flex');
+    }
+    reset();
+    homeTool();                       // nothing to wind back from on the first draw
+    paintOps(); paintMats(); paintSpeeds(); paintRun(); paintViewMode();
+    applyMesh();
+    resizeView();
+    requestAnimationFrame(hideLoader);
+    setTimeout(hideLoader, 400);
+    requestAnimationFrame(frame);
+};

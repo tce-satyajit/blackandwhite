@@ -1,0 +1,197 @@
+/* ---- Text size in the HTML chrome -------------------------
+   Header, sliders, chips, panels and modal all size themselves
+   off --fs. Change this one number to scale the whole interface.
+   Canvas labels are separate: see FS in the script. */
+:root { --fs: 1.15; }
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #f1f5f9;
+    color: #0f172a;
+    overflow-x: hidden;
+}
+
+.mono {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+canvas {
+    touch-action: none;
+}
+
+/* Custom light scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #e2e8f0;
+}
+::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+}
+
+/* Range slider styling for Light Theme */
+/* Track and thumb follow the same neutral palette as the pill buttons:
+   light grey rail, dark slate thumb ringed in white. */
+input[type=range] {
+    -webkit-appearance: none;
+    background: #e5e7eb;
+    height: 6px;
+    border-radius: 999px;
+}
+input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 18px;
+    width: 18px;
+    border-radius: 50%;
+    background: #0f172a;
+    border: 2px solid #ffffff;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(15, 23, 42, 0.25);
+    transition: transform 0.1s ease, background-color 0.2s ease;
+}
+input[type=range]::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    background: #334155;
+}
+input[type=range]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 1px #e5e7eb, 0 0 0 4px rgba(15, 23, 42, 0.18);
+}
+
+
+
+/* ---- Loading veil -------------------------------------------
+   Vendored Tailwind, the fonts and (in the 3D build) three.js all have
+   to arrive before the page means anything. This covers the half-built
+   layout until the simulation has actually started. */
+#loader {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    background: #f1f5f9;
+    transition: opacity .35s ease, visibility .35s ease;
+}
+/* pointer-events goes the instant the class lands, so a throttled or
+   interrupted transition can never leave the veil swallowing clicks */
+#loader.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+#loader .ring {
+    width: 38px; height: 38px; border-radius: 50%;
+    border: 3px solid #cbd5e1; border-top-color: #0f172a;
+    animation: loaderspin .8s linear infinite;
+}
+#loader .cap {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px; font-weight: 600; letter-spacing: .02em; color: #64748b;
+}
+@keyframes loaderspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    #loader .ring { animation-duration: 2.4s; }
+}
+
+
+/* The read-out is the printer's own screen: a dark LCD in a bezel, with
+   the glow and the faint scan lines a real panel has. */
+#axisbox {
+    background: #10161c;
+    border: 1px solid #2b343d;
+    border-radius: 12px;
+    padding: 8px;
+    box-shadow: 0 8px 22px rgba(2, 6, 12, .38), inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+.lcd-head {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 14px; padding: 0 3px 6px;
+    font-size: calc(9px * var(--fs));
+    font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+    color: #93a3b3;
+}
+#lcd-state { color: #34d399; }
+.lcd-screen {
+    position: relative;
+    background: linear-gradient(#0a1512, #071110);
+    border: 1px solid #24302c;
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.lcd-screen::after {                 /* scan lines */
+    content: ''; position: absolute; inset: 0; border-radius: 7px;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        0deg, rgba(0, 0, 0, .22) 0 1px, transparent 1px 3px);
+}
+.lcd-row {
+    display: flex; align-items: center; gap: 7px;
+    font-size: calc(13px * var(--fs));
+    line-height: 1.5;
+}
+.lcd-row i { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.lcd-row b { color: #d8f5e8; width: .9em; font-weight: 700; }
+.lcd-row .lcd-val {
+    min-width: 4.6em; text-align: right;
+    color: #eafff6; font-weight: 700;
+    text-shadow: 0 0 7px rgba(120, 255, 200, .55);
+}
+.lcd-row em { font-style: normal; color: #86a89c; font-size: calc(11px * var(--fs)); }
+.lcd-row u { text-decoration: none; color: #7d9d92; font-size: calc(11px * var(--fs)); }
+.lcd-sep { height: 1px; background: #22302b; margin: 6px 0; }
+.lcd-line {
+    font-size: calc(12px * var(--fs)); line-height: 1.6; color: #87a99d;
+}
+.lcd-line b {
+    color: #cdf3e4; font-weight: 700;
+    text-shadow: 0 0 6px rgba(120, 255, 200, .40);
+}
+.lcd-warn { color: #f0b45f; }
+.lcd-warn b { color: #f0b45f; }
+#v-reel-dot {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 2px; vertical-align: -1px; margin-left: 4px;
+}
+.lcd-foot {
+    padding: 6px 3px 0;
+    font-size: calc(10px * var(--fs)); color: #7d8b97;
+}
+
+.cseg i {
+    display: inline-block; width: 9px; height: 9px;
+    border-radius: 2px; margin-right: 4px; vertical-align: -1px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .18);
+}
+.cseg:disabled { cursor: default; }
+.cseg.dim { opacity: .38; }
+
+.mseg.on,
+.oseg.on,
+.vseg.on,
+.cseg.on {
+    background: #0f172a;
+    color: #ffffff;
+    border-color: #0f172a;
+}
+
+.glass-panel {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Gear selector segment, lit when engaged */
+.gseg.on {
+    background: #0f172a;
+    color: #ffffff;
+    border-color: #0f172a;
+}
+
+/* Panels overlaid on the simulation follow the dark view too */
+.sim-note.dark {
+    background: rgba(15, 23, 42, .92);
+    border-color: #334155;
+    color: #cbd5e1;
+}
+.sim-note.dark b, .sim-note.dark .hd { color: #f1f5f9; }
