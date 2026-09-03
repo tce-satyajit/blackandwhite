@@ -1178,10 +1178,10 @@
             // a stripe round the joint where the top casting meets the body,
             // which is where it sits on the real machine — not across the top,
             // where the speed levers have to stand
-            const band = new THREE.Mesh(roundedBox(HEAD_X1 - HEAD_L + 6, 13, 174, 3),
+            const band = new THREE.Mesh(roundedBox(HEAD_X1 - HEAD_L + 2, 8, 170, 2),
                 new THREE.MeshStandardMaterial({ color: 0xb5301f, roughness: 0.45,
                                                  metalness: 0.12 }));
-            band.position.set(hMid, AXIS_Y + 74, -6);
+            band.position.set(hMid, AXIS_Y + 70, -6);
             band.castShadow = true; scene.add(band);
 
 
