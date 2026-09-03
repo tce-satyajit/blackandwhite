@@ -485,7 +485,7 @@ function brandTexture() {
     const c = document.createElement('canvas');
     c.width = c.height = S;
     const g = c.getContext('2d');
-    const txt = 'TCE-LABS', size = 102, track = 10, R = 446;
+    const txt = 'TCE-LAB', size = 102, track = 10, R = 446;
     g.font = 'bold ' + size + 'px Inter, Helvetica, Arial, sans-serif';
     g.textAlign = 'center'; g.textBaseline = 'middle';
 
@@ -584,7 +584,7 @@ function dialTexture() {
     // arc for a given length of word, so the setting comes in with
     // it - otherwise the name starts curving harder than anything
     // else on the dial, which is what makes it look stuck on.
-    const brand = 'TCE-LABS', bR = 150, bTrack = 2.5 * PX;
+    const brand = 'TCE-LAB', bR = 150, bTrack = 2.5 * PX;
     g.font = '' + Math.round(14 * PX) + 'px Georgia, "Times New Roman", Times, serif';
     let bTotal = 0;
     for (const ch of brand) bTotal += (g.measureText(ch).width + bTrack) / (bR * PX);
