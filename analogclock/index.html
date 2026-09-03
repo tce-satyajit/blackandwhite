@@ -126,11 +126,6 @@
 
                 <!-- The two times, side by side. This is the whole argument of
                      the model: they only agree while the beat is exactly a second. -->
-                <!-- Said out loud when the clock stops, so a still pendulum is
-                     not mistaken for a frozen picture. -->
-                <div id="alarm" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md text-[calc(13px*var(--fs))] text-center max-w-md">
-                    <b id="alarm-title"></b> <span id="alarm-body" class="opacity-90"></span>
-                </div>
             </div>
 
             <!-- Sliders on the left, everything else beside them. -->
@@ -436,7 +431,6 @@
             show: 'clock',
             sound: true, mesh: false, turntable: false,
             viewMode: 'blueprint',
-            stopped: false,
             vphase: 0,                         // the pendulum as drawn, which may be slowed
             strike: null,                      // { left, phase, hour } while striking
             windAnim: 0                        // >0 while the key is being turned
@@ -964,7 +958,7 @@
             return dialTex;
         }
 
-        // A hand: flat blackened steel with a polished chamfer round the
+        // A hand: flat blackened steel with a gilt chamfer round the
         // edge, which is how they are really finished - and it is the only
         // treatment that stays readable everywhere this one has to be. A
         // flat colour cannot: dark hands disappear into the dark ground
@@ -1091,9 +1085,11 @@
             // part metallic so the edges still catch a highlight and the
             // hand does not go flat.
             MAT.handDark    = new THREE.MeshStandardMaterial({ color: 0x15181d, metalness: 0.45, roughness: 0.28 });
-            // The chamfer, polished bright. This is the edge that outlines
-            // the hand against a dark ground, so it wants to be a mirror.
-            MAT.handEdge    = new THREE.MeshStandardMaterial({ color: 0xe4e9ef, metalness: 0.97, roughness: 0.07 });
+            // The chamfer, gilt and polished. This is the edge that
+            // outlines the hand against a dark ground, so it wants to be a
+            // mirror - brighter and smoother than the brass of the
+            // movement, or it stops separating the hand from the wheels.
+            MAT.handEdge    = new THREE.MeshStandardMaterial({ color: 0xe8c465, metalness: 0.98, roughness: 0.055 });
             // The seconds hand is lacquered, not metal - which is exactly
             // why it stays legible from across a room.
             MAT.handRed     = new THREE.MeshStandardMaterial({ color: 0xb3241a, metalness: 0.15, roughness: 0.36 });
@@ -1122,7 +1118,7 @@
             MAT.steelBright.envMapIntensity = 2.2;
             MAT.steelDark.envMapIntensity = 1.5;
             MAT.handDark.envMapIntensity = 0.75;
-            MAT.handEdge.envMapIntensity = 2.6;
+            MAT.handEdge.envMapIntensity = 2.9;
             MAT.handRed.envMapIntensity = 0.5;
             MAT.chain.envMapIntensity = 1.8;
             MAT.titanium.envMapIntensity = 1.7;
@@ -1888,7 +1884,6 @@
                     bellSound();
                 }
             }
-            state.stopped = state.running && !willRun();
 
             if (state.strike) {
                 const rate = Math.min(state.mult, 24);
@@ -2049,31 +2044,6 @@
             $('stat-drift').textContent = signed(d, 1);
             $('stat-amp').textContent = state.arc.toFixed(2);
             $('v-turns').textContent = signed(nutTurns(), 1) + ' turns';
-            paintAlarm();
-        }
-
-        function paintAlarm() {
-            const el = $('alarm');
-            let title = '', body = '', cls = '';
-            if (state.stopped) {
-                title = 'Stopped.';
-                body = 'The drive is too weak to unlock the escapement, so the pendulum is swinging free and the train is not counting.';
-                cls = 'bg-rose-50 border-rose-200 text-rose-800';
-            } else if (state.running && state.mult > 60) {
-                title = 'Pendulum shown slowed.';
-                body = 'Time is running at ' + state.mult + ' times, which is far too fast to draw. The counting underneath is still exact.';
-                cls = 'bg-amber-50 border-amber-200 text-amber-800';
-            } else if (state.running && Math.abs(rateDay()) > 120) {
-                title = 'Well off rate.';
-                body = (rateDay() > 0 ? 'Gaining ' : 'Losing ') + Math.abs(rateDay()).toFixed(0) +
-                       ' seconds a day. Try the rating nut.';
-                cls = 'bg-sky-50 border-sky-200 text-sky-800';
-            }
-            if (!title) { el.classList.add('hidden'); return; }
-            el.className = 'absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md ' +
-                'text-[calc(13px*var(--fs))] text-center max-w-md ' + cls;
-            $('alarm-title').textContent = title;
-            $('alarm-body').textContent = body;
         }
 
         // =============================================================
@@ -2160,7 +2130,7 @@
             state.running = true;
             state.arc = NOM_ARC;
             state.esc = 'dead';
-            state.strike = null; state.stopped = false;
+            state.strike = null;
             soundStop();
             setToTime();
             state.vphase = state.beats;
