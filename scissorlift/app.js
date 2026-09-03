@@ -11,7 +11,10 @@ const G_ACC = 9.81;
 const ARM_L = 900;
 const STAGES = 2;
 const TH_MIN = 8 * Math.PI / 180;
-const TH_MAX = 68 * Math.PI / 180;
+// 54.752 deg puts the deck top at exactly 1.80 m. Any higher and the
+// machine is taller than its own wheelbase is long, which looks - and
+// is - top heavy.
+const TH_MAX = 54.752 * Math.PI / 180;
 
 // Where the rams are bolted on. RAM_P is measured along the base from
 // the fixed pivot, RAM_Q along the arm from the same pivot - so the ram,
@@ -32,8 +35,12 @@ const P = Object.assign({}, DEFAULTS);
 const state = {
     th: TH_MIN,                        // the one variable the machine has
     cmd: 0,                            // -1 lowering, 0 holding, +1 raising
-    crate: true, forces: true, sound: true, mesh: false, turntable: false,
+    // The arrows are a teaching overlay, not part of the machine, so
+    // they wait to be asked for.
+    crate: true, forces: false, sound: true, mesh: false, turntable: false,
     warn: 0,                           // seconds of warning still to sound
+    motion: 0,                         // 0..1, how much of full flow is actually moving
+    lastDir: 0,                        // which way it was going, for the run-down
     viewMode: 'blueprint'
 };
 
@@ -83,6 +90,14 @@ const deckSpeed = () => ramSpeed() * ratio(state.th);       // mm/s
 const LOWER_SPEED = 26;                                     // mm/s of ram, on the way down
 // How long the warning sounds before anything is allowed to move.
 const WARN_TIME = 1.3;
+// Nothing mechanical steps from still to full flow and back again. The
+// valve is eased open and shut and the motor takes a moment either way,
+// so the lift settles onto its stops instead of arriving at them - which
+// on a real machine is the difference between stopping and shock-loading
+// the linkage with a tonne on the deck.
+const RAMP_TIME = 0.5;                // seconds to spin up, and to run down
+const EASE_RAM = 30;                  // mm of ram travel eased at each end
+const EASE_FLOOR = 0.2;               // never quite zero, or it would never arrive
 
 const hydPower = () => pressure() * 1e5 * (P.flow / 60000); // W
 const motorPower = () => hydPower() / EFF;                  // W
@@ -193,7 +208,7 @@ function badgeTexture() {
     g.fillText('LIFT', 140, 58);
     g.fillStyle = '#aebdcc';
     g.font = '22px Inter, Helvetica, Arial, sans-serif';
-    g.fillText('2000 kg  \u00b7  2.0 m  \u00b7  250 bar', 34, 98);
+    g.fillText('2000 kg  \u00b7  1.8 m  \u00b7  250 bar', 34, 98);
     badgeTex = new THREE.CanvasTexture(c);
     return badgeTex;
 }
@@ -208,15 +223,11 @@ function logoTexture() {
     g.clearRect(0, 0, 720, 152);
     g.textBaseline = 'middle';
     g.font = 'bold 96px Inter, Helvetica, Arial, sans-serif';
-    g.fillStyle = 'rgba(24,16,4,0.5)';
-    g.fillText('TCE', 30, 82);
-    g.fillStyle = '#16181c';
-    g.fillText('TCE', 26, 78);
-    const w = g.measureText('TCE').width;
-    g.fillStyle = 'rgba(24,16,4,0.5)';
-    g.fillText('-LABS', 30 + w, 82);
-    g.fillStyle = '#7ed957';
-    g.fillText('-LABS', 26 + w, 78);
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    g.fillText('TCE-LAB', 30, 82);
+    g.fillStyle = '#b6b7b8';
+    g.fillText('TCE-LAB', 26, 78);
+    
     logoTex = new THREE.CanvasTexture(c);
     logoTex.anisotropy = 8;
     return logoTex;
@@ -381,8 +392,10 @@ function buildBase() {
             g.add(screw);
         });
 
-        const logo = new THREE.Mesh(new THREE.PlaneGeometry(360, 76), MAT.logo);
-        logo.position.set(-390, yMid + 6, s2 * (BASE_Z + 3));
+        // The name, on the panel and dead centre of the side - the one
+        // stretch of the machine that no wheel and no arm ever crosses.
+        const logo = new THREE.Mesh(new THREE.PlaneGeometry(340, 72), MAT.logo);
+        logo.position.set(60, yMid + 2, s2 * (BASE_Z + 8));
         logo.rotation.y = s2 > 0 ? 0 : Math.PI;
         g.add(logo);
 
@@ -869,7 +882,7 @@ function update3D() {
     // dark the moment it is holding. Two flashes a second, which is what
     // these actually run at.
     if (beaconLamp) {
-        const live = state.cmd !== 0 || state.warn > 0;
+        const live = state.cmd !== 0 || state.warn > 0 || state.motion > 0.05;
         const on = live && Math.sin(performance.now() / 1000 * Math.PI * 4) > 0;
         beaconLamp.material.emissiveIntensity = on ? 2.4 : 0.08;
         beaconLight.intensity = on ? 2.2 : 0;
@@ -943,41 +956,12 @@ function updateStats() {
     $('stat-h').textContent = heightM().toFixed(2);
     $('stat-f').textContent = (ramForce() / 1000).toFixed(0);
     $('stat-p').textContent = pressure().toFixed(0);
-    $('stat-v').textContent = (state.cmd > 0 && !stalled() ? deckSpeed()
-                             : state.cmd < 0 ? -LOWER_SPEED * ratio(state.th) : 0).toFixed(0);
-    $('stat-w').textContent = (state.cmd > 0 && !stalled() ? motorPower() / 1000 : 0).toFixed(1);
-    paintAlarm();
-}
-
-function paintAlarm() {
-    const el = $('alarm');
-    let title = '', body = '', cls = '';
-    if (tipping()) {
-        title = 'Going over.';
-        body = 'The load and the machine together now balance ' + Math.abs(cgX()).toFixed(0) +
-               ' mm off centre, and the wheels are only ' + WHEEL_X + ' mm out. Bring the load in.';
-        cls = 'bg-rose-50 border-rose-200 text-rose-800';
-    } else if (state.cmd > 0 && stalled()) {
-        title = 'Relief valve blowing off.';
-        body = 'It needs ' + pressure().toFixed(0) + ' bar and the valve opens at ' + P.relief +
-               '. The oil is going straight back to tank and the lift is not moving. It is worst ' +
-               'down here - try a wider bore, or less load.';
-        cls = 'bg-rose-50 border-rose-200 text-rose-800';
-    } else if (state.th >= TH_MAX - 1e-4) {
-        title = 'Fully up.';
-        body = 'The deck is at ' + heightM().toFixed(2) + ' m and the arms have run out of angle.';
-        cls = 'bg-sky-50 border-sky-200 text-sky-800';
-    } else if (state.th <= TH_MIN + 1e-4 && state.cmd === 0) {
-        title = 'Down and stowed.';
-        body = 'The arms are nearly flat, which is where the rams have the least to work with. ' +
-               'Watch the pressure as you start it up.';
-        cls = 'bg-slate-50 border-slate-200 text-slate-700';
-    }
-    if (!title) { el.classList.add('hidden'); return; }
-    el.className = 'absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md ' +
-        'text-[calc(13px*var(--fs))] text-center max-w-lg ' + cls;
-    $('alarm-title').textContent = title;
-    $('alarm-body').textContent = body;
+    const dir = state.cmd || (state.motion > 0 ? state.lastDir : 0);
+    $('stat-v').textContent = ((dir > 0 ? deckSpeed()
+                              : dir < 0 ? -LOWER_SPEED * ratio(state.th) : 0)
+                              * state.motion).toFixed(0);
+    $('stat-w').textContent = (state.cmd > 0 && stalled() ? motorPower() / 1000
+                              : dir > 0 ? motorPower() * state.motion / 1000 : 0).toFixed(1);
 }
 
 // =============================================================
@@ -1008,6 +992,7 @@ function oneShot(el, vol) {
 // Sounded the moment a direction is asked for, before any of it moves.
 function warnAndGo(dir) {
     state.cmd = dir;
+    state.lastDir = dir;
     state.warn = WARN_TIME;
     loopOff(aRaise); loopOff(aLower);
     oneShot(aBeep, 0.7);
@@ -1015,12 +1000,16 @@ function warnAndGo(dir) {
 
 function soundUpdate() {
     if (!aRaise) return;
-    const moving = state.sound && state.warn <= 0;
-    if (moving && state.cmd > 0 && !stalled()) {
-        // The note rides with the pressure the load is asking for.
-        loopOn(aRaise, 0.30 + 0.25 * clamp(pressure() / P.relief, 0, 1), 1);
+    // The sound follows state.motion, so it winds up with the pump and
+    // runs down with it, instead of being cut off at the stop.
+    const m = state.sound && state.warn <= 0 ? state.motion : 0;
+    const dir = state.cmd || state.lastDir;
+    const rate = 0.78 + 0.22 * m;
+    if (m > 0.02 && dir > 0) {
+        // and the note rides with the pressure the load is asking for
+        loopOn(aRaise, (0.30 + 0.25 * clamp(pressure() / P.relief, 0, 1)) * m, rate);
     } else loopOff(aRaise);
-    if (moving && state.cmd < 0) loopOn(aLower, 0.32, 1);
+    if (m > 0.02 && dir < 0) loopOn(aLower, 0.34 * m, rate);
     else loopOff(aLower);
 }
 function soundStop() {
@@ -1030,25 +1019,43 @@ function soundStop() {
 // =============================================================
 //  Loop
 // =============================================================
+// How much of full flow to allow, given how near the ram is to the end
+// of its own travel. Measured on the RAM rather than on the angle,
+// because the ram is the part moving at a steady rate - so the run-in
+// takes the same couple of seconds whether it is easing onto the top
+// stop or the bottom one, even though the deck speed differs tenfold.
+function endEase(dir) {
+    const sr = ramLen(state.th);
+    const room = dir > 0 ? (ramLen(TH_MAX) - sr) : (sr - ramLen(TH_MIN));
+    return EASE_FLOOR + (1 - EASE_FLOOR) * ease(room / EASE_RAM);
+}
+
 function step(dt) {
     // The warning runs first and the machine waits for it. This is the
     // order a real one does it in, and it is not decoration: people
     // stand next to these things.
-    if (state.warn > 0) { state.warn = Math.max(0, state.warn - dt); return; }
-    if (state.cmd > 0) {
-        // Past the relief setting the valve opens and the oil goes round
-        // in a circle. The motor works just as hard and nothing moves.
-        if (stalled()) return;
-        const dth = deckSpeed() * dt / (STAGES * ARM_L * Math.cos(state.th));
-        state.th = Math.min(TH_MAX, state.th + dth);
-        if (state.th >= TH_MAX) state.cmd = 0;
-    } else if (state.cmd < 0) {
-        // Coming down needs no pump at all: the load does the work and a
-        // valve only decides how fast it is allowed to give it back.
-        const dth = LOWER_SPEED * ratio(state.th) * dt / (STAGES * ARM_L * Math.cos(state.th));
-        state.th = Math.max(TH_MIN, state.th - dth);
-        if (state.th <= TH_MIN) state.cmd = 0;
+    if (state.warn > 0) {
+        state.warn = Math.max(0, state.warn - dt);
+        state.motion = 0;
+        return;
     }
+
+    // Past the relief setting the valve opens and the oil goes round in a
+    // circle. The motor works just as hard and nothing moves.
+    const blocked = state.cmd > 0 && stalled();
+    const want = (state.cmd !== 0 && !blocked) ? endEase(state.cmd) : 0;
+    state.motion += (want - state.motion) * Math.min(1, dt / RAMP_TIME);
+    if (state.motion < 0.001) state.motion = 0;
+    if (blocked || state.cmd === 0) return;
+
+    // Coming down needs no pump at all: the load does the work, and the
+    // valve only decides how fast it is allowed to give it back.
+    const dth = (state.cmd > 0 ? deckSpeed() : -LOWER_SPEED * ratio(state.th))
+                * state.motion * dt / (STAGES * ARM_L * Math.cos(state.th));
+    state.th = clamp(state.th + dth, TH_MIN, TH_MAX);
+    // The command drops out at the stop, and the motor runs itself down
+    // over the next half second rather than being switched off.
+    if (state.th >= TH_MAX || state.th <= TH_MIN) state.cmd = 0;
 }
 
 const DT = 1 / 120;
@@ -1071,6 +1078,7 @@ function frame(now) {
 function reset() {
     Object.assign(P, DEFAULTS);
     state.th = TH_MIN; state.cmd = 0; state.warn = 0;
+    state.motion = 0; state.lastDir = 0;
     soundStop();
     ['load', 'offset', 'bore', 'flow', 'relief'].forEach(k => {
         $('s-' + k).value = P[k];

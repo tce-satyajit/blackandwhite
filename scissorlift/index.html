@@ -73,11 +73,6 @@
                     <p class="text-[calc(14px*var(--fs))] text-slate-600 max-w-md">This browser could not start 3D graphics (WebGL), so the lift cannot be drawn. The readings and controls below still work.</p>
                 </div>
 
-                <!-- Said out loud when the lift will not move, because a
-                     machine standing still looks the same whatever the reason. -->
-                <div id="alarm" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md text-[calc(13px*var(--fs))] text-center max-w-lg">
-                    <b id="alarm-title"></b> <span id="alarm-body" class="opacity-90"></span>
-                </div>
             </div>
 
             <div class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col xl:flex-row gap-2">
@@ -158,8 +153,8 @@
                         <label id="chip-crate" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Draw the load on the deck.">
                             <input id="chk-crate" type="checkbox" class="accent-slate-900" checked><span>Load</span>
                         </label>
-                        <label id="chip-forces" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Draw the ram force and the weight as arrows, to the same scale.">
-                            <input id="chk-forces" type="checkbox" class="accent-slate-900" checked><span>Forces</span>
+                        <label id="chip-forces" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Draw the ram push and the load weight as arrows. Off to begin with, since they are a teaching overlay and not part of the machine.">
+                            <input id="chk-forces" type="checkbox" class="accent-slate-900"><span>Forces</span>
                         </label>
                         <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="The warning before it moves, then the pump on the way up and the oil on the way down.">
                             <input id="chk-sound" type="checkbox" class="accent-slate-900" checked><span>Sound</span>
@@ -211,7 +206,7 @@
                     <h3 class="font-bold text-slate-800 mb-1">2. The scissor: a mechanical advantage that keeps changing</h3>
                     <ul class="list-disc pl-5 space-y-1">
                         <li>Here is the thing that makes a scissor lift worth studying. Its mechanical advantage is not a number you can look up &mdash; it <b>changes all the way up the lift</b>, and it changes enormously.</li>
-                        <li>Watch the ram force as you raise it from the bottom. Near the floor the arms are almost flat, and holding the deck up takes something like <b>twenty times</b> the weight on it. By the top it is nearer twice. Same lift, same load, same rams.</li>
+                        <li>Watch the ram force as you raise it from the bottom. Near the floor the arms are almost flat, and holding the deck up takes something like <b>twenty times</b> the weight on it. By the top it is nearer three. Same lift, same load, same rams.</li>
                         <li>Why? Because at a shallow angle the ram is pushing almost <i>along</i> the arm rather than across it, and almost none of its push turns into a turning effect about the pivot. The useful part of a force is the part at right angles to the arm.</li>
                         <li>Now watch the <b>speed</b> at the same time. It bolts away from the floor and then crawls near the top. That is not a coincidence, and it is not the pump changing: it is the same trade, read the other way round.</li>
                         <li>Work it out with <b>work</b>. The ram does <span class="mono">F &times; s</span> and the load gains <span class="mono">W &times; h</span>, and those must be equal, so

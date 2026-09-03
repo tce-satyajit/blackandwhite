@@ -16,9 +16,9 @@
       "modalTitle": "Scissor Lift",
       "src": "scissorlift/index.html",
       "thumb": "scissorlift/thumb.png",
-      "alt": "Motorised hydraulic scissor lift on castors, raising a load",
+      "alt": "Motorised hydraulic scissor lift on solid tyres, raising a load",
       "tag": "Grade 8–10 · Physics",
-      "body": "Two rams, a linkage, and a mechanical advantage that will not sit still. Flat on the floor the rams push twenty times the weight they are lifting; near the top, twice. Watch the pressure gauge collapse as it rises — then watch the speed do the opposite, and work out why those are the same fact."
+      "body": "Two rams, a linkage, and a mechanical advantage that will not sit still. Flat on the floor the rams push twenty times the weight they are lifting; near the top, three times. Watch the pressure gauge collapse as it rises — then watch the speed do the opposite, and work out why those are the same fact."
     },
     {
       "title": "6-Axis Robot Arm",
