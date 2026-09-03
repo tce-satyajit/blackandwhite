@@ -170,6 +170,46 @@
             outline-offset: 2px;
         }
 
+        /* ---- While demo.json is on its way ----
+           Four cells filling one at a time. E-paper cannot fade, so nothing
+           here does either: the keyframes step between full ink and none,
+           the way a real panel repaints a region. */
+        .loading {
+            grid-column: 1 / -1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            padding: 90px 0 110px;
+        }
+        .loading .cells { display: flex; gap: 7px; }
+        .loading .cells i {
+            width: 13px;
+            height: 13px;
+            border: 1px solid var(--ink);
+            border-radius: 2px;
+            background: transparent;
+            animation: ink 1.2s linear infinite;
+        }
+        .loading .cells i:nth-child(2) { animation-delay: .3s; }
+        .loading .cells i:nth-child(3) { animation-delay: .6s; }
+        .loading .cells i:nth-child(4) { animation-delay: .9s; }
+        @keyframes ink {
+            0%, 25%      { background: var(--ink); }
+            25.01%, 100% { background: transparent; }
+        }
+        .loading p {
+            margin: 0;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            color: var(--ink-low);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .loading .cells i { animation-duration: 3.6s; }
+        }
+
         /* ---- Modal ---- */
         .modal { position: fixed; inset: 0; z-index: 50; display: none; }
         .modal.open { display: block; }
@@ -227,7 +267,12 @@
     <main>
         <div class="grid">
 
-            <!-- Cards are written in by the script below, from demo.json -->
+            <!-- Cards are written in by the script below, from demo.json.
+                 Until they arrive, this stands in their place. -->
+            <div class="loading ui" role="status" aria-live="polite">
+                <div class="cells"><i></i><i></i><i></i><i></i></div>
+                <p>Loading simulations</p>
+            </div>
 
         </div>
     </main>
