@@ -69,6 +69,18 @@
         @keyframes loaderspin { to { transform: rotate(360deg); } }
         @media (prefers-reduced-motion: reduce) { #loader .ring { animation-duration: 2.4s; } }
 
+        .plab {
+            position: absolute; white-space: nowrap; pointer-events: none;
+            padding: 2px 7px; border-radius: 6px;
+            background: rgba(255,255,255,.94); color: #0f172a;
+            border: 1px solid rgba(234,115,23,.55);
+            box-shadow: 0 1px 4px rgba(0,0,0,.28);
+            font-weight: 700; letter-spacing: .01em;
+            font-size: calc(11px * var(--fs)); line-height: 1.35;
+            transform: translateY(-50%);
+        }
+        .plab.r { transform: translate(-100%, -50%); }
+
         .mseg.on, .sseg.on, .vseg.on, .bseg.on, .oseg.on, .cseg.on { background: #0f172a; color: #ffffff; border-color: #0f172a; }
         .sseg:disabled { cursor: default; }
         .sseg.dim { opacity: .38; }
@@ -126,6 +138,13 @@
 
             <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
                 <div id="view3d" class="absolute inset-0"></div>
+
+                <!-- Part names, drawn over the machine like a labelled diagram.
+                     The anchors are real points in the scene, so the leaders
+                     follow the carriage and the tailstock as they move. -->
+                <div id="parts" class="hidden absolute inset-0 z-10 pointer-events-none overflow-hidden">
+                    <svg id="parts-svg" class="absolute inset-0 w-full h-full"></svg>
+                </div>
 
                 <div id="nogl" class="hidden absolute inset-0 z-20 items-center justify-center p-8 text-center">
                     <p class="text-[calc(14px*var(--fs))] text-slate-600 max-w-md">This browser could not start 3D graphics (WebGL), so the lathe cannot be drawn. The readings and controls below still work.</p>
@@ -243,6 +262,9 @@
                 </label>
                 <label id="chip-mesh" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show mesh: draw every surface as the triangles it is really made of.">
                     <input id="chk-mesh" type="checkbox" class="accent-slate-900"><span>Mesh</span>
+                </label>
+                <label id="chip-parts" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Name the parts of the lathe on the machine itself.">
+                    <input id="chk-parts" type="checkbox" class="accent-slate-900"><span>Parts</span>
                 </label>
                 <label id="chip-spin" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none">
                     <input id="chk-spin" type="checkbox" class="accent-slate-900"><span>Spin</span>
@@ -445,7 +467,7 @@
             setupT: 1,                        // 0..1 while fresh stock is loaded
             fast: false, slow: false,
             chips: true, sound: true, trace: false,
-            mesh: false, turntable: false,
+            mesh: false, turntable: false, parts: false,
             viewMode: 'blueprint'
         };
 
@@ -595,7 +617,7 @@
         // what one turn of each handwheel is worth, in mm of travel
         const LEAD_CARRIAGE = 40, LEAD_CROSS = 2, LEAD_TAIL = 5;
         let chipGrp = null, chips = [], chuckJaws = [];
-        let offcut = null, offcutV = 0;
+        let offcut = null, offcutV = 0, offcutR = 0, offcutDown = false;
         let gl = false;
         const MAT = {};
 
@@ -603,6 +625,7 @@
         // The workpiece is a row of radii sampled along its length. Every
         // operation reduces radii; that one rule covers turning, facing and
         // parting, because all three are the tool sweeping through metal.
+        let PAN_TOP = 146;                    // top of the chip pan floor
         const NSEG = 132;
         const dx = () => BAR_L / NSEG;
         let rad = [], bore = [], skin = [];
@@ -860,6 +883,7 @@
             MAT.tool   = new THREE.MeshStandardMaterial({ color: 0xd6a933, metalness: 0.78, roughness: 0.28 });
             MAT.carbide= new THREE.MeshStandardMaterial({ color: 0x33383f, metalness: 0.5, roughness: 0.32 });
             MAT.tray   = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.7, metalness: 0.16 });
+            MAT.handle = new THREE.MeshStandardMaterial({ color: 0x1b1e23, roughness: 0.40, metalness: 0.34 });
 
             MAT.cast.envMapIntensity = MAT.cast2.envMapIntensity = 0.24;
             MAT.way.envMapIntensity = 2.0;
@@ -870,6 +894,7 @@
             MAT.tool.envMapIntensity = 1.25;
             MAT.motor.envMapIntensity = 0.8;
             MAT.dark.envMapIntensity = 0.4;
+            MAT.handle.envMapIntensity = 0.7;
 
             buildMachine();
             freshBar();
@@ -911,15 +936,49 @@
         }
 
         function buildMachine() {
-            // --- stand, chip tray and bed -------------------------------
+            // --- stand, chip pan and bed --------------------------------
+            // A lathe of this size stands on two hollow pedestals rather than
+            // legs: a splayed foot, a stepped column, and a recessed panel down
+            // the front that is really the door to the cabinet inside. The
+            // chip pan bridges them and carries the whole machine.
             [[-70, 190], [400, 150]].forEach(([px, pw]) => {
-                const plinth = new THREE.Mesh(roundedBox(pw, 132, 230, 8), MAT.cast2);
-                plinth.position.set(px, 70, -10);
-                plinth.castShadow = plinth.receiveShadow = true; scene.add(plinth);
+                const foot = new THREE.Mesh(roundedBox(pw + 30, 20, 252, 5), MAT.cast2);
+                foot.position.set(px, 10, -10);
+                foot.castShadow = foot.receiveShadow = true; scene.add(foot);
+                const low = new THREE.Mesh(roundedBox(pw + 12, 56, 238, 7), MAT.cast2);
+                low.position.set(px, 48, -10);
+                low.castShadow = low.receiveShadow = true; scene.add(low);
+                const col = new THREE.Mesh(roundedBox(pw, 62, 226, 7), MAT.cast2);
+                col.position.set(px, 107, -10);
+                col.castShadow = col.receiveShadow = true; scene.add(col);
+                // the recessed door panel down the front of the cabinet
+                const door = new THREE.Mesh(roundedBox(pw * 0.56, 86, 7, 2), MAT.tray);
+                door.position.set(px, 84, 106); scene.add(door);
             });
-            const tray = new THREE.Mesh(roundedBox(BED_X1 - BED_X0 + 90, 22, 260, 6), MAT.tray);
-            tray.position.set((BED_X0 + BED_X1) / 2, 143, -6);
-            tray.castShadow = tray.receiveShadow = true; scene.add(tray);
+            // The chip pan: a floor with a lip all the way round, not a slab.
+            // Swarf and anything parted off lands in it.
+            const trayL = BED_X1 - BED_X0 + 110, trayMid = (BED_X0 + BED_X1) / 2;
+            const PAN_Y = 140;   PAN_TOP = PAN_Y + 6;
+            const pan = new THREE.Mesh(roundedBox(trayL, 12, 258, 4), MAT.tray);
+            pan.position.set(trayMid, PAN_Y, -6);
+            pan.castShadow = pan.receiveShadow = true; scene.add(pan);
+            // The front lip has to stop short of the leadscrew, or it hides the
+            // one part that shows the carriage being driven along.
+            [[130, 28, 148], [-142, 26, 147]].forEach(([pz, ph, py]) => {
+                const lip = new THREE.Mesh(roundedBox(trayL, ph, 13, 3), MAT.tray);
+                lip.position.set(trayMid, py, pz);
+                lip.castShadow = true; scene.add(lip);
+            });
+            [trayMid - trayL / 2 + 7, trayMid + trayL / 2 - 7].forEach(ex => {
+                const end = new THREE.Mesh(roundedBox(13, 28, 258, 3), MAT.tray);
+                end.position.set(ex, 148, -6);
+                end.castShadow = true; scene.add(end);
+            });
+            // the maker's name along the front of the pan, as they always are
+            const panBadge = new THREE.Mesh(new THREE.PlaneGeometry(104, 26),
+                new THREE.MeshStandardMaterial({ map: badgeTexture(), roughness: 0.5,
+                                                 transparent: true }));
+            panBadge.position.set(300, 149, 137.5); scene.add(panBadge);
 
             const bedL = BED_X1 - BED_X0;
             const bed = new THREE.Mesh(roundedBox(bedL, 56, 150, 6), MAT.cast);
@@ -964,6 +1023,49 @@
             lampMesh = new THREE.Mesh(new THREE.SphereGeometry(7.5, 18, 14), MAT.lamp);
             lampMesh.position.set(headMid + 56, AXIS_Y - 22, 82); scene.add(lampMesh);
 
+            // The end cabinet: the sloping cover over the change gears at the
+            // far end of the headstock, which on a machine this size runs right
+            // down to the pan. It is the shape that makes a lathe recognisable
+            // from across a workshop.
+            const cab = new THREE.Shape();
+            cab.moveTo(-34, 0); cab.lineTo(40, 0); cab.lineTo(40, 232);
+            cab.lineTo(2, 232); cab.lineTo(-34, 150); cab.closePath();
+            const cabG = new THREE.ExtrudeGeometry(cab, {
+                depth: 196, bevelEnabled: true, bevelThickness: 3,
+                bevelSize: 3, bevelSegments: 1, curveSegments: 2 });
+            cabG.translate(0, 0, -98);
+            const cabMesh = new THREE.Mesh(cabG, MAT.tray);
+            cabMesh.position.set(HEAD_X0 - 34, 148, -8);
+            cabMesh.castShadow = cabMesh.receiveShadow = true; scene.add(cabMesh);
+
+            // The feed gearbox, hung on the front below the headstock. Its knobs
+            // are what pick the feed per revolution and the thread pitch.
+            const fbox = new THREE.Mesh(roundedBox(158, 88, 56, 6), MAT.cast);
+            fbox.position.set(HEAD_X0 + 96, 186, 96);
+            fbox.castShadow = true; scene.add(fbox);
+            const fplate = new THREE.Mesh(roundedBox(132, 62, 5, 2), MAT.cast2);
+            fplate.position.set(HEAD_X0 + 96, 190, 125); scene.add(fplate);
+            [[-46, 0xd23b2c], [-14, 0x2b6cb0], [18, 0xd9a520], [48, 0x22262c]]
+                .forEach(([kx, col], i) => {
+                    const knob = new THREE.Mesh(new THREE.CylinderGeometry(11, 13, 16, 16),
+                        new THREE.MeshStandardMaterial({ color: col, roughness: 0.42,
+                                                         metalness: 0.25 }));
+                    knob.rotation.x = Math.PI / 2;
+                    knob.position.set(HEAD_X0 + 96 + kx, 190 + (i % 2 ? -16 : 16), 133);
+                    knob.castShadow = true; scene.add(knob);
+                    const pin = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 22, 8), MAT.mach);
+                    pin.position.set(0, 9, 0); knob.add(pin);
+                });
+
+            // the red band along the top of the headstock, and a caution plate
+            const band = new THREE.Mesh(roundedBox(HEAD_X1 - HEAD_X0 - 46, 11, 152, 3),
+                new THREE.MeshStandardMaterial({ color: 0xb5301f, roughness: 0.45,
+                                                 metalness: 0.12 }));
+            band.position.set(headMid, AXIS_Y + 98, -6); scene.add(band);
+            const caution = new THREE.Mesh(new THREE.PlaneGeometry(38, 26),
+                new THREE.MeshStandardMaterial({ color: 0xe8c53a, roughness: 0.5 }));
+            caution.position.set(HEAD_X0 + 26, AXIS_Y + 58, 79); scene.add(caution);
+
             // the two speed levers on the headstock top
             [[headMid - 50, 0.5], [headMid + 30, -0.35]].forEach(([lx, tilt]) => {
                 const boss = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 16, 16), MAT.cast2);
@@ -989,6 +1091,32 @@
                 sl.position.set(headMid - 50, AXIS_Y - 34 + Math.sin(a) * 55, -140 + Math.cos(a) * 55);
                 sl.rotation.x = -a; scene.add(sl);
             }
+
+            // The motor has to be wired to something. A terminal box on top of
+            // it, then flexible conduit looping across to the back of the
+            // headstock, with enough slack in it to look like it was fitted by
+            // somebody rather than drawn.
+            const tbox = new THREE.Mesh(roundedBox(48, 26, 40, 3), MAT.motor);
+            tbox.position.set(headMid - 25, AXIS_Y + 30, -140);
+            tbox.castShadow = true; scene.add(tbox);
+            const tlid = new THREE.Mesh(roundedBox(52, 5, 44, 1.5), MAT.dark);
+            tlid.position.set(headMid - 25, AXIS_Y + 45, -140); scene.add(tlid);
+            const cableMat = new THREE.MeshStandardMaterial({
+                color: 0x1a1d22, roughness: 0.72, metalness: 0.05 });
+            [[-14, 2.9, 30], [10, 2.4, -22]].forEach(([off, r, sag]) => {
+                const c = new THREE.CatmullRomCurve3([
+                    new THREE.Vector3(headMid - 25 + off, AXIS_Y + 44, -140),
+                    new THREE.Vector3(headMid - 25 + off, AXIS_Y + 62, -136),
+                    new THREE.Vector3(headMid - 12 + off, AXIS_Y + 66 - sag * 0.5, -118),
+                    new THREE.Vector3(headMid + 6 + off, AXIS_Y + 40 - sag * 0.3, -96),
+                    new THREE.Vector3(headMid + 14 + off, AXIS_Y + 16, -80)]);
+                const t = new THREE.Mesh(new THREE.TubeGeometry(c, 40, r, 9, false), cableMat);
+                t.castShadow = true; scene.add(t);
+            });
+            // the gland where they go into the headstock casting
+            const gland = new THREE.Mesh(new THREE.CylinderGeometry(13, 15, 12, 16), MAT.mach);
+            gland.rotation.x = Math.PI / 2;
+            gland.position.set(headMid + 6, AXIS_Y + 16, -78); scene.add(gland);
 
             // --- spindle and the three-jaw chuck ------------------------
             spindleGrp = new THREE.Group();
@@ -1062,17 +1190,18 @@
             dPoint.position.set(-165, AXIS_Y, 0); drillGrp.add(dPoint);
             drillGrp.visible = false;
             tailGrp.add(drillGrp);
-            const tShaft = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 34, 16), MAT.way);
+            const tBoss = new THREE.Mesh(new THREE.CylinderGeometry(20, 22, 14, 18), MAT.mach);
+            tBoss.rotation.z = Math.PI / 2;
+            tBoss.position.set(80, AXIS_Y, 0);
+            tBoss.castShadow = true; tailGrp.add(tBoss);
+            const tShaft = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 56, 16), MAT.way);
             tShaft.rotation.z = Math.PI / 2;
-            tShaft.position.set(72, AXIS_Y, 0);
+            tShaft.position.set(88, AXIS_Y, 0);
             tShaft.castShadow = true; tailGrp.add(tShaft);
             tWheelObj = handwheel(34, 5.5);
             tWheelObj.rotation.y = Math.PI / 2;       // its shaft runs along the bed
-            tWheelObj.position.set(84, AXIS_Y, 0);
+            tWheelObj.position.set(108, AXIS_Y, 0);
             tailGrp.add(tWheelObj);
-            const tLock = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 74, 12), MAT.dark);
-            tLock.rotation.set(0, 0, 0.55);
-            tLock.position.set(20, AXIS_Y + 62, 34); tailGrp.add(tLock);
             scene.add(tailGrp);
 
             // --- leadscrew and feed shaft along the front ----------------
@@ -1096,8 +1225,24 @@
             const apron = new THREE.Mesh(roundedBox(120, 84, 26, 6), MAT.cast);
             apron.position.set(0, BED_TOP - 14, 103);
             apron.castShadow = true; saddleGrp.add(apron);
+            // The handwheels have to stand off the castings on their own
+            // shafts. Flush against the apron there is nowhere to put a hand,
+            // and on a real machine the boss and shaft are what carry the
+            // wheel clear of everything else on the front.
+            // Set along the apron rather than straight under the cross-slide
+            // wheel, so the two are not stacked one behind the other and each
+            // has its own room. That is how they sit on the real machine.
+            const HW_X = -62, HW_Y = BED_TOP - 30;
+            const hBoss = new THREE.Mesh(new THREE.CylinderGeometry(21, 23, 13, 18), MAT.mach);
+            hBoss.rotation.x = Math.PI / 2;
+            hBoss.position.set(HW_X, HW_Y, 120);
+            hBoss.castShadow = true; saddleGrp.add(hBoss);
+            const hShaft = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 44, 14), MAT.way);
+            hShaft.rotation.x = Math.PI / 2;
+            hShaft.position.set(HW_X, HW_Y, 132);
+            hShaft.castShadow = true; saddleGrp.add(hShaft);
             hWheelObj = handwheel(42, 6);
-            hWheelObj.position.set(0, BED_TOP - 22, 122);
+            hWheelObj.position.set(HW_X, HW_Y, 150);
             saddleGrp.add(hWheelObj);
 
             // The cross-slide sets the depth of cut. Its top has to stay under
@@ -1107,14 +1252,91 @@
             const cross = new THREE.Mesh(roundedBox(112, 22, 190, 5), MAT.cast2);
             cross.position.set(0, CROSS_TOP - 11, 34);
             cross.castShadow = true; crossGrp.add(cross);
+            const cBoss = new THREE.Mesh(new THREE.CylinderGeometry(16, 18, 11, 18), MAT.mach);
+            cBoss.rotation.x = Math.PI / 2;
+            cBoss.position.set(0, CROSS_TOP - 11, 134);
+            cBoss.castShadow = true; crossGrp.add(cBoss);
+            const cShaft = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 40, 14), MAT.way);
+            cShaft.rotation.x = Math.PI / 2;
+            cShaft.position.set(0, CROSS_TOP - 11, 148);
+            cShaft.castShadow = true; crossGrp.add(cShaft);
             cWheelObj = handwheel(30, 5);
-            cWheelObj.position.set(0, CROSS_TOP - 11, 140);
+            cWheelObj.position.set(0, CROSS_TOP - 11, 166);
             crossGrp.add(cWheelObj);
             const dial = new THREE.Mesh(new THREE.CylinderGeometry(20, 20, 12, 22), MAT.mach);
             dial.rotation.x = Math.PI / 2;
             dial.position.set(0, CROSS_TOP - 11, 124); crossGrp.add(dial);
 
-            // Everything from here up is TALL, so it all has to sit forward of
+            // A four-way turret toolpost. The tool is gripped in the slot where the
+        // top plate meets the block below it, and the whole turret is locked by
+        // the tapered boss in the middle: slacken the lever, swing round to the
+        // next of the four tools, nip it up again. That is why the plate carries
+        // eight bolts and not two — one pair holding down each of the four
+        // stations. The joint line sits at the height of the tool shank,
+        // because that is what the two halves are clamping.
+        function fourWayPost(x, z) {
+            const g = new THREE.Group();
+            const SEAT = AXIS_Y - 4.5;              // top of the shank = the slot
+            const add = (m, px, py, pz) => { m.position.set(px, py, pz);
+                                             m.castShadow = true; g.add(m); return m; };
+            // the block the tool sits on, sunk a little into the compound
+            add(new THREE.Mesh(roundedBox(64, SEAT - COMP_TOP + 8, 64, 3), MAT.mach),
+                x, (COMP_TOP - 8 + SEAT) / 2, z);
+            // the clamp plate over it, overhanging on every side
+            add(new THREE.Mesh(roundedBox(76, 14, 76, 2), MAT.steel), x, SEAT + 7, z);
+            // two bolts to a side, eight in all, one pair for each station
+            const BOLT = [[26, 13], [26, -13], [-26, 13], [-26, -13],
+                          [13, 26], [-13, 26], [13, -26], [-13, -26]];
+            BOLT.forEach(([bx, bz]) => {
+                add(new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 9, 8), MAT.mach),
+                    x + bx, SEAT + 18, z + bz);                       // the thread standing proud
+                add(new THREE.Mesh(new THREE.CylinderGeometry(6.6, 6.6, 9, 6), MAT.dark),
+                    x + bx, SEAT + 26, z + bz);                       // and its hex head
+            });
+            // the collar the turret swivels on
+            add(new THREE.Mesh(new THREE.CylinderGeometry(21, 22, 6, 26), MAT.mach),
+                x, SEAT + 17, z);
+            // The locking boss: a bullet, widest near the top and domed over,
+            // not a cone standing on its point.
+            const boss = [[0, 0], [15, 0], [16.5, 5], [16.5, 26], [15.5, 32],
+                          [12, 37], [6, 40], [0, 41]].map(q => new THREE.Vector2(q[0], q[1]));
+            add(new THREE.Mesh(new THREE.LatheGeometry(boss, 26), MAT.way), x, SEAT + 20, z);
+
+            // The lever is cranked, not straight: a short stub leans back out of
+            // the boss, then it elbows over and runs out shallowly with a
+            // knurled grip on the end. Every piece hangs off a pivot rooted
+            // inside the boss and grows along its own axis, so the whole thing
+            // stays attached however it is swung.
+            const pivot = new THREE.Group();
+            pivot.position.set(x, SEAT + 48, z);
+            pivot.rotation.y = 0.30;                 // swung round toward the operator
+            g.add(pivot);
+            const stubG = new THREE.Group();
+            stubG.rotation.x = -0.30;                // the stub leans away from you
+            pivot.add(stubG);
+            const stub = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 6.0, 20, 14), MAT.handle);
+            stub.position.y = 10; stub.castShadow = true; stubG.add(stub);
+            const elbow = new THREE.Mesh(new THREE.SphereGeometry(4.9, 16, 12), MAT.handle);
+            elbow.position.y = 20; stubG.add(elbow);
+
+            const armG = new THREE.Group();
+            armG.position.y = 20;
+            armG.rotation.x = 1.50;                  // and then it bends back over the top
+            stubG.add(armG);
+            const rod = new THREE.Mesh(new THREE.CylinderGeometry(4.0, 4.8, 34, 14), MAT.handle);
+            rod.position.y = 15; rod.castShadow = true; armG.add(rod);
+            const grip = new THREE.Mesh(new THREE.CylinderGeometry(6.2, 6.6, 30, 16), MAT.handle);
+            grip.position.y = 44; grip.castShadow = true; armG.add(grip);
+            [34, 41, 48].forEach(gy => {             // the knurled bands on the sleeve
+                const ring = new THREE.Mesh(new THREE.CylinderGeometry(6.8, 6.8, 1.6, 16), MAT.mach);
+                ring.position.y = gy; armG.add(ring);
+            });
+            const cap = new THREE.Mesh(new THREE.SphereGeometry(6.3, 16, 12), MAT.handle);
+            cap.position.y = 59; cap.scale.y = 0.62; armG.add(cap);
+            return g;
+        }
+
+        // Everything from here up is TALL, so it all has to sit forward of
             // the work: the compound, the toolpost, and only then the tool
             // reaching back to the cutting edge.
             const compound = new THREE.Mesh(roundedBox(96, 18, 96, 5), MAT.cast);
@@ -1122,16 +1344,7 @@
             compound.castShadow = true; crossGrp.add(compound);
 
             toolGrp = new THREE.Group();
-            const post = new THREE.Mesh(roundedBox(64, 48, 64, 4), MAT.mach);
-            post.position.set(TRAIL_X, COMP_TOP + 24, POST_Z0 + 32);
-            post.castShadow = true; toolGrp.add(post);
-            const postNut = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 18, 6), MAT.dark);
-            postNut.position.set(TRAIL_X, COMP_TOP + 52, POST_Z0 + 32); toolGrp.add(postNut);
-            for (let k = 0; k < 2; k++) {
-                const clampBolt = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 20, 10), MAT.dark);
-                clampBolt.position.set(TRAIL_X - 15 + k * 30, COMP_TOP + 50, POST_Z0 + 10);
-                toolGrp.add(clampBolt);
-            }
+            toolGrp.add(fourWayPost(TRAIL_X, POST_Z0 + 32));
             // A right-hand turning tool: a rhombic carbide insert clamped on the
             // end of a shank, with the shank swept back toward the tailstock so
             // it trails the cutting corner instead of rubbing the work beside
@@ -1182,9 +1395,7 @@
             const pHold = new THREE.Mesh(roundedBox(22, 52, 66, 3), MAT.tool);
             pHold.position.set(PART_W / 2, AXIS_Y, 117);
             pHold.castShadow = true; partGrp.add(pHold);
-            const pPost = new THREE.Mesh(roundedBox(60, 46, 60, 4), MAT.mach);
-            pPost.position.set(PART_W / 2, COMP_TOP + 23, POST_Z0 + 32);
-            pPost.castShadow = true; partGrp.add(pPost);
+            partGrp.add(fourWayPost(PART_W / 2, POST_Z0 + 32));
             partGrp.visible = false;
             crossGrp.add(partGrp);
 
@@ -1527,24 +1738,38 @@
             for (let i = NSEG; i >= i0; i--) if (rad[i] > 0.06) { end = i; break; }
             for (let i = i0; i <= end; i++) pts.push(new THREE.Vector2(Math.max(0.05, rad[i]), xAt(i) - xAt(i0)));
             pts.push(new THREE.Vector2(0.05, xAt(end) - xAt(i0)));
+            offcutR = pts.reduce((m, q) => Math.max(m, q.x), 0);   // so it can rest ON the pan
             const g = new THREE.LatheGeometry(pts, 40).rotateZ(-Math.PI / 2);
             const om = workMesh.material.clone();
             om.vertexColors = false;
             om.color = new THREE.Color(M().skin[0], M().skin[1], M().skin[2]);
             offcut = new THREE.Mesh(g, om);
+            offcutDown = false;
             offcut.position.set(xAt(i0), AXIS_Y, 0);
             offcut.castShadow = true;
             scene.add(offcut);
             offcutV = 0;
             for (let i = i0; i <= NSEG; i++) rad[i] = 0;
         }
+        // The parted piece tumbles into the pan and settles there. It is swept
+        // about its parted END, not its middle, so while it is turning it
+        // reaches a whole length away from its own axis — which is why it has
+        // to stop turning and lie down before it can rest on the pan floor.
         function stepOffcut(dt) {
             if (!offcut) return;
-            offcutV -= 1400 * dt;
-            offcut.position.y += offcutV * dt;
-            offcut.rotation.z += 1.6 * dt;
-            if (offcut.position.y < 168) {          // comes to rest in the tray
-                offcut.position.y = 168; offcutV = 0;
+            const rest = PAN_TOP + offcutR;
+            if (!offcutDown) {
+                offcutV -= 1400 * dt;
+                offcut.position.y += offcutV * dt;
+                offcut.rotation.z += 1.6 * dt;
+                if (offcut.position.y <= rest) {
+                    offcut.position.y = rest; offcutV = 0; offcutDown = true;
+                }
+            } else {
+                // it clatters flat over about a fifth of a second
+                const flat = Math.round(offcut.rotation.z / (Math.PI * 2)) * Math.PI * 2;
+                offcut.rotation.z += (flat - offcut.rotation.z) * Math.min(1, dt * 14);
+                offcut.position.y = rest;
             }
         }
         function clearOffcut() {
@@ -1616,6 +1841,7 @@
             }
             controls.update();
             renderer.render(scene, camera);
+            if (state.parts) layoutParts();
         }
 
         const VIEWS = {
@@ -1865,6 +2091,142 @@
         }
 
         // =============================================================
+        //  Part names
+        // =============================================================
+        // Anchors are real points in the scene, taken through each part's own
+        // transform, so a label follows the carriage or the tailstock as it
+        // moves instead of being pinned to a spot on the glass. `pri` decides
+        // who survives when the window is too short to list everybody.
+        const PARTS = [
+            { n: 'Headstock',      pri: 9, p: () => new THREE.Vector3(-250, AXIS_Y + 30, 60) },
+            { n: 'Gearbox levers', pri: 5, p: () => new THREE.Vector3(-261, AXIS_Y + 145, 34) },
+            { n: 'Speed chart',    pri: 3, p: () => new THREE.Vector3(-271, AXIS_Y - 4, 82) },
+            { n: 'Motor',          pri: 6, p: () => new THREE.Vector3(-236, AXIS_Y - 34, -196) },
+            { n: 'Spindle nose',   pri: 4, p: () => new THREE.Vector3(-86, AXIS_Y + 36, 0) },
+            { n: 'Three-jaw chuck',pri: 10, p: () => new THREE.Vector3(-46, AXIS_Y + 88, 0) },
+            { n: 'Chuck jaws',     pri: 5, p: () => chuckJaws.length
+                    ? chuckJaws[0].getWorldPosition(new THREE.Vector3()) : null },
+            { n: 'Workpiece',      pri: 10, p: () => new THREE.Vector3(60, AXIS_Y + radiusAt(60) + 4, 0) },
+            { n: 'Cutting tool',   pri: 10, p: () => {
+                    const g = boreGrp && boreGrp.visible ? boreGrp
+                            : partGrp && partGrp.visible ? partGrp
+                            : toolGrp && toolGrp.visible ? toolGrp : null;
+                    return g ? g.localToWorld(new THREE.Vector3(0, AXIS_Y + 8, 8)) : null; } },
+            { n: 'Toolpost',       pri: 9, p: () => toolGrp && toolGrp.visible
+                    ? toolGrp.localToWorld(new THREE.Vector3(TRAIL_X, COMP_TOP + 30, POST_Z0 + 32))
+                    : partGrp.localToWorld(new THREE.Vector3(PART_W / 2, COMP_TOP + 30, POST_Z0 + 32)) },
+            { n: 'Compound slide', pri: 7, p: () =>
+                    crossGrp.localToWorld(new THREE.Vector3(TRAIL_X, COMP_TOP - 9, COMP_Z0 + 96)) },
+            { n: 'Cross slide',    pri: 8, p: () =>
+                    crossGrp.localToWorld(new THREE.Vector3(0, CROSS_TOP - 11, 70)) },
+            { n: 'Cross-slide handwheel', pri: 7, p: () =>
+                    cWheelObj.getWorldPosition(new THREE.Vector3()) },
+            { n: 'Saddle (carriage)', pri: 8, p: () =>
+                    saddleGrp.localToWorld(new THREE.Vector3(0, BED_TOP + 30, 70)) },
+            { n: 'Carriage handwheel', pri: 7, p: () =>
+                    hWheelObj.getWorldPosition(new THREE.Vector3()) },
+            { n: 'Leadscrew',      pri: 5, p: () => new THREE.Vector3(180, BED_TOP - 34, 100) },
+            { n: 'Bed',            pri: 8, p: () => new THREE.Vector3(210, BED_TOP + 6, 96) },
+            { n: 'Chip pan',       pri: 4, p: () => new THREE.Vector3(140, 172, 130) },
+            { n: 'Feed gearbox',   pri: 6, p: () => new THREE.Vector3(HEAD_X0 + 96, 200, 130) },
+            { n: 'End cabinet',    pri: 4, p: () => new THREE.Vector3(HEAD_X0 - 34, 300, 60) },
+            { n: 'Pedestal stand', pri: 5, p: () => new THREE.Vector3(-70, 70, 108) },
+            { n: 'Tailstock',      pri: 9, p: () =>
+                    tailGrp.localToWorld(new THREE.Vector3(6, AXIS_Y + 52, 0)) },
+            { n: 'Tailstock barrel', pri: 6, p: () =>
+                    tailGrp.localToWorld(new THREE.Vector3(-72, AXIS_Y + 23, 0)) },
+            { n: 'Tailstock handwheel', pri: 6, p: () =>
+                    tWheelObj.getWorldPosition(new THREE.Vector3()) }
+        ];
+        const PART_INK = '#ea7317';
+        let partEls = null;
+        function buildPartLabels() {
+            const host = $('parts'), svg = $('parts-svg'), NS = 'http://www.w3.org/2000/svg';
+            partEls = PARTS.map(pt => {
+                const d = document.createElement('div');
+                d.className = 'plab'; d.textContent = pt.n; host.appendChild(d);
+                const ln = document.createElementNS(NS, 'line');
+                ln.setAttribute('stroke', PART_INK);
+                ln.setAttribute('stroke-width', '1.5');
+                ln.setAttribute('stroke-linecap', 'round');
+                svg.appendChild(ln);
+                const dot = document.createElementNS(NS, 'circle');
+                dot.setAttribute('r', '3.4');
+                dot.setAttribute('fill', PART_INK);
+                svg.appendChild(dot);
+                return { d, ln, dot, w: 0 };
+            });
+        }
+        function layoutParts() {
+            if (!partEls) buildPartLabels();
+            const W = renderer.domElement.clientWidth, H = renderer.domElement.clientHeight;
+            const PAD = 8, ROW = 24;
+            const hide = E => { E.d.style.display = 'none';
+                                E.ln.style.display = 'none'; E.dot.style.display = 'none'; };
+            // where each anchor lands on the glass
+            const live = [];
+            PARTS.forEach((pt, i) => {
+                let v = null;
+                try { v = pt.p(); } catch (e) { v = null; }
+                if (!v) { hide(partEls[i]); return; }
+                const q = v.project(camera);
+                if (q.z > 1) { hide(partEls[i]); return; }     // behind the camera
+                const sx = (q.x * 0.5 + 0.5) * W, sy = (-q.y * 0.5 + 0.5) * H;
+                if (sx < -60 || sx > W + 60 || sy < -30 || sy > H + 30) { hide(partEls[i]); return; }
+                live.push({ i, sx, sy, pri: pt.pri, side: 0 });
+            });
+            // Split on the median anchor rather than the middle of the window.
+            // The lathe rarely sits centred in frame, and a fixed midpoint puts
+            // three quarters of the names down one edge.
+            const xs = live.map(o => o.sx).sort((a, b) => a - b);
+            const mid = xs.length ? xs[xs.length >> 1] : W * 0.5;
+            live.forEach(o => o.side = o.sx < mid ? 0 : 1);
+            // stack each side down its own edge, nearest to where it points
+            const placed = {};
+            [0, 1].forEach(side => {
+                let col = live.filter(o => o.side === side).sort((a, b) => a.sy - b.sy);
+                const cap = Math.max(1, Math.floor((H - 2 * PAD) / ROW));
+                if (col.length > cap) {                       // the least important go
+                    const keep = col.slice().sort((a, b) => b.pri - a.pri || a.sy - b.sy)
+                                    .slice(0, cap).map(o => o.i);
+                    col.filter(o => keep.indexOf(o.i) < 0).forEach(o => hide(partEls[o.i]));
+                    col = col.filter(o => keep.indexOf(o.i) >= 0);
+                }
+                let y = PAD;
+                col.forEach(o => { o.ly = Math.max(y, Math.min(o.sy, H - PAD)); y = o.ly + ROW; });
+                const over = y - ROW + PAD - H;               // pull the run back up if it ran off
+                if (over > 0) col.forEach(o => o.ly = Math.max(PAD, o.ly - over));
+                col.forEach(o => placed[o.i] = o);
+            });
+            // Hang the two columns off the sides of the MACHINE, not the sides
+            // of the window. Pinned to the window, a wide screen stretches every
+            // leader across the empty half of the frame and they cross into a
+            // web. Butted up against the machine they stay short and read as
+            // pointing at one part each.
+            let wide = 0;
+            live.forEach(o => { const E = partEls[o.i];
+                                if (!E.w) E.w = E.d.offsetWidth;
+                                if (E.w > wide) wide = E.w; });
+            const GUT = 44;
+            let bx0 = W, bx1 = 0;
+            live.forEach(o => { if (o.sx < bx0) bx0 = o.sx; if (o.sx > bx1) bx1 = o.sx; });
+            const lEdge = clamp(bx0 - GUT, PAD + wide, W * 0.55);   // left names END here
+            const rEdge = clamp(bx1 + GUT, W * 0.45, W - PAD - wide); // right names START here
+            live.forEach(o => {
+                const E = partEls[o.i], put = placed[o.i];
+                if (!put) return;
+                E.d.style.display = ''; E.ln.style.display = ''; E.dot.style.display = '';
+                E.d.classList.toggle('r', o.side === 0);        // the left column is right-aligned
+                E.d.style.top = put.ly + 'px';
+                E.d.style.left = (o.side ? rEdge : lEdge) + 'px';
+                const from = o.side ? rEdge - 6 : lEdge + 6;
+                E.ln.setAttribute('x1', from); E.ln.setAttribute('y1', put.ly);
+                E.ln.setAttribute('x2', o.sx); E.ln.setAttribute('y2', o.sy);
+                E.dot.setAttribute('cx', o.sx); E.dot.setAttribute('cy', o.sy);
+            });
+        }
+
+        // =============================================================
         //  Controls
         // =============================================================
         function reset(showSetup) {
@@ -2010,6 +2372,10 @@
             if (on) drawGraph();
         });
         bindChip('chk-mesh', 'chip-mesh', 'mesh', () => applyMesh());
+        bindChip('chk-parts', 'chip-parts', 'parts', on => {
+            $('parts').classList.toggle('hidden', !on);
+            if (on && gl) layoutParts();
+        });
         bindChip('chk-spin', 'chip-spin', 'turntable');
 
         function paintViews(name) {
