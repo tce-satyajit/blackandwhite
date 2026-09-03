@@ -54,15 +54,15 @@
         header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
         header p { margin: 4px 0 0; font-size: 13px; color: var(--ink-mid); font-style: italic; }
 
-        /* 4 columns need 4x330 + 3x24 = 1392px of track, so the old 1200px
-           cap could only ever fit 3. Widened to let a fourth in on a big
-           screen; auto-fit still drops to 3, 2 or 1 as the window narrows. */
-        main { max-width: 1560px; margin: 0 auto; padding: 26px 24px 40px; }
+        /* At a 272px track, 1560px of page fits five columns (5x272 + 4x18
+           = 1432). auto-fit still drops to four, three, two or one as the
+           window narrows, so nothing has to be said about breakpoints. */
+        main { max-width: 1560px; margin: 0 auto; padding: 22px 20px 34px; }
 
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-            gap: 24px;
+            grid-template-columns: repeat(auto-fit, minmax(272px, 1fr));
+            gap: 18px;
         }
 
         .card {
@@ -83,7 +83,7 @@
             width: 100%;
             border: 0;
              /* border-bottom: 1px solid var(--ink-low);  */
-            padding: 10px;
+            padding: 8px;
             background: var(--panel);
             cursor: pointer;
             position: relative;
@@ -118,12 +118,12 @@
         }
         .shot:hover::after, .shot:focus-visible::after { opacity: 1; }
 
-        .body { padding: 10px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+        .body { padding: 9px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
 
         .tag {
             align-self: flex-start;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            font-size: 9.5px;
+            font-size: 9px;
     font-weight: 700;
     letter-spacing: .12em;
     text-transform: uppercase;
@@ -131,28 +131,28 @@
     background: transparent;
     border: 1px solid #b4b4b4;
     border-radius: 5px;
-    padding: 3px 8px;
+    padding: 2px 7px;
         }
-        .card h2 { margin: 0; padding: 12px 10px 10px; font-size: 17px;
+        .card h2 { margin: 0; padding: 10px 9px 8px; font-size: 15px;
                    font-weight: 700; letter-spacing: -.01em; }
-        .body p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-mid); flex: 1; }
+        .body p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--ink-mid); flex: 1; }
 
         /* Rule between the copy and the controls, like a printed divider */
         .actions {
             display: flex;
-            gap: 8px;
+            gap: 7px;
             flex-wrap: wrap;
-            padding-top: 12px;
+            padding-top: 10px;
             border-top: 1px solid var(--hair);
         }
 
         button.act {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            font-size: 10.5px;
+            font-size: 9.5px;
             font-weight: 700;
             letter-spacing: .1em;
             text-transform: uppercase;
-            padding: 9px 13px;
+            padding: 7px 11px;
             border-radius: 6px;
             cursor: pointer;
             border: 1px solid var(--ink);
@@ -227,237 +227,7 @@
     <main>
         <div class="grid">
 
-            <article class="card">
-                    <h2>Walschaerts Valve Gear</h2>
-                <button class="shot" data-src="steamengine/index.html" data-title="Walschaerts Valve Gear Simulator"
-                        aria-label="Open Walschaerts Valve Gear Simulator">
-                    <img src="steamengine/thumb.png" alt="Steam locomotive valve gear simulation">
-                </button>
-                <div class="body">
-                    <p>How a locomotive times steam into a double-acting cylinder. Adjust cut-off and reversing,
-                       watch the piston valve distribute live and exhaust steam, and hear the exhaust beat.</p>
-                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
-                       <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="steamengine/index.html" data-title="Walschaerts Valve Gear Simulator">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="steamengine/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Rotary to Linear Motion</h2>
-                <button class="shot" data-src="grashof/index.html" data-title="Rotary to Linear Motion"
-                        aria-label="Open Rotary to Linear Motion simulation">
-                    <img src="grashof/thumb.png" alt="Crank-rocker and rack simulation">
-                </button>
-                <div class="body">
-                    <p>A crank-rocker driving a toothed rack. Vary the crank length to cross the Grashof limit
-                       and see continuous rotation give way to a linkage that can no longer turn.</p>
-                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
-                       <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="grashof/index.html" data-title="Rotary to Linear Motion">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="grashof/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Scotch Yoke Mechanism</h2>
-                <button class="shot" data-src="scotchyoke/index.html" data-title="Scotch Yoke Mechanism"
-                        aria-label="Open Scotch Yoke simulation">
-                    <img src="scotchyoke/thumb.png" alt="Scotch yoke mechanism simulation">
-                </button>
-                <div class="body">
-                    <p>A pin running in a slotted yoke, turning rotation into <em>exact</em> simple harmonic
-                       motion. Watch displacement trace a true cosine while the crank turns steadily.</p>
-                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
-                       <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="scotchyoke/index.html" data-title="Scotch Yoke Mechanism">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="scotchyoke/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Aircraft Landing Gear</h2>
-                <button class="shot" data-src="landinggear/index.html" data-title="Aircraft Landing Gear"
-                        aria-label="Open Aircraft Landing Gear simulation">
-                    <img src="landinggear/thumb.png" alt="Aircraft landing gear physics simulation">
-                </button>
-                <div class="body">
-                    <p>Land an airliner and watch the strut absorb it. Momentum, impulse and Hooke&rsquo;s law,
-                       with live force and compression graphs showing why a longer impact means a gentler one.</p>
-                    <span class="tag">Grade 9&ndash;10 &middot; Physics</span>
-                    <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="landinggear/index.html" data-title="Aircraft Landing Gear">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="landinggear/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Car Gearbox</h2>
-                <button class="shot" data-src="cargearbox/index.html" data-title="Car Gearbox"
-                        aria-label="Open Car Gearbox simulation">
-                    <img src="cargearbox/thumb.png" alt="Car gearbox physics simulation">
-                </button>
-                <div class="body">
-                    <p>Start the engine, pick a gear and drive. Watch a small gear turn a big one into
-                       strong slow torque &mdash; and see on the dials why a hill wants first gear and a
-                       motorway wants fifth.</p>
-                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
-                    <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="cargearbox/index.html" data-title="Car Gearbox">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="cargearbox/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Differential Gear &mdash; 2D</h2>
-                <button class="shot" data-src="differential2d/index.html" data-title="Differential Gear — 2D"
-                        aria-label="Open Differential Gear 2D simulation">
-                    <img src="differential2d/thumb.png" alt="Differential gear physics simulation">
-                </button>
-                <div class="body">
-                    <p>Round a bend the outer wheel has further to go. Watch the spider gears spin to let it,
-                       check that the two wheel speeds always average to the carrier &mdash; then put one wheel
-                       on ice and see why the car goes nowhere.</p>
-                    <span class="tag">Grade 8&ndash;11 &middot; Physics</span>
-                    <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="differential2d/index.html" data-title="Differential Gear — 2D">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="differential2d/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Differential Gear &mdash; 3D</h2>
-                <button class="shot" data-src="differential3d/index.html" data-title="Differential Gear — 3D"
-                        aria-label="Open Differential Gear 3D simulation">
-                    <img src="differential3d/thumb.png" alt="Differential gear 3D model simulation">
-                </button>
-                <div class="body">
-                    <p>The same physics on a real three-dimensional differential you can turn round and
-                       look into. Hold one wheel still and watch the other run at exactly twice the
-                       carrier speed.</p>
-                    <span class="tag">Grade 8&ndash;11 &middot; Physics</span>
-                    <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="differential3d/index.html" data-title="Differential Gear — 3D">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="differential3d/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Analog Clock</h2>
-                <button class="shot" data-src="analogclock/index.html" data-title="Analog Clock"
-                        aria-label="Open Analog Clock simulation">
-                    <img src="analogclock/thumb.png" alt="Pendulum clock on a stand, with the movement visible behind the dial">
-                </button>
-                <div class="body">
-                    <p>Only one part of a clock keeps time, and it is not the gears. The pendulum is
-                       the ruler and the wheels are a counter &mdash; 43&nbsp;200 beats to one turn of
-                       the hour hand. Take the dial and the case away to watch the train do the
-                       counting, then move the rating nut one millimetre and watch 43 seconds a day
-                       appear out of nowhere.</p>
-                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
-                    <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="analogclock/index.html" data-title="Analog Clock">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="analogclock/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Centre Lathe</h2>
-                <button class="shot" data-src="lathe/index.html" data-title="Centre Lathe"
-                        aria-label="Open Centre Lathe simulation">
-                    <img src="lathe/thumb.png" alt="Centre lathe turning a bar down in the chuck">
-                </button>
-                <div class="body">
-                    <p>The machine where the cutting speed will not stay put. Every pass makes the
-                       bar thinner, so the speed the edge sees falls away while you work &mdash; and
-                       facing to the centre takes it to zero. The companion piece to the bench drill,
-                       and it inverts the drill&rsquo;s lesson: here, spinning faster really does
-                       finish the job sooner.</p>
-                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
-                    <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="lathe/index.html" data-title="Centre Lathe">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="lathe/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>Bench Drill</h2>
-                <button class="shot" data-src="benchdrill/index.html" data-title="Bench Drill"
-                        aria-label="Open Bench Drill simulation">
-                    <img src="benchdrill/thumb.png" alt="Bench drill with the belt drive visible through a clear guard">
-                </button>
-                <div class="body">
-                    <p>One motor at one speed, and a belt on five pairs of pulleys to turn it into
-                       five. Move the belt and watch speed and turning effort trade off exactly.
-                       Then try to stall it: on the low steps the belt slips first, on the high ones
-                       the motor gives out &mdash; and changing gear turns out to be no help at all
-                       against the second one.</p>
-                    <span class="tag">Grade 8&ndash;10 &middot; Physics</span>
-                    <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="benchdrill/index.html" data-title="Bench Drill">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="benchdrill/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>6-Axis Robot Arm</h2>
-                <button class="shot" data-src="6axisarm/index.html" data-title="6-Axis Robot Arm"
-                        aria-label="Open 6-Axis Robot Arm simulation">
-                    <img src="6axisarm/thumb.png" alt="Industrial robot arm lifting a carton onto a moving conveyor">
-                </button>
-                <div class="body">
-                    <p>An industrial arm picking parts off a table and setting them on a moving belt.
-                       Six revolute joints, solved with the cosine rule; watch the shoulder torque climb
-                       as the load goes out to arm's length, and find the acceleration that pulls the
-                       part off the tool.</p>
-                    <span class="tag">Grade 8&ndash;11 &middot; Physics</span>
-                    <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="6axisarm/index.html" data-title="6-Axis Robot Arm">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="6axisarm/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
-
-            <article class="card">
-                    <h2>3D Printer</h2>
-                <button class="shot" data-src="3dprinter/index.html" data-title="3D Printer Simulator"
-                        aria-label="Open 3D Printer Simulator">
-                    <img src="3dprinter/thumb.png" alt="3D printer building an object layer by layer">
-                </button>
-                <div class="body">
-                    <p>How a machine builds a solid object by adding one layer at a time. Set the layer height,
-                       speed and temperatures, watch the X, Y and Z axes move as the nozzle traces each slice,
-                       and print the pot in four colours off the four-spool AMS. Slow motion drops it to
-                       real time, to watch a single line actually go down.</p>
-                    <span class="tag">Grade 8&ndash;11 &middot; Physics</span>
-                       <div class="actions">
-                        <button class="act primary" data-open="modal"
-                                data-src="3dprinter/index.html" data-title="3D Printer Simulator">Open in Modal</button>
-                        <button class="act" data-open="window" data-src="3dprinter/index.html">New Window</button>
-                    </div>
-                </div>
-            </article>
+            <!-- Cards are written in by the script below, from demo.json -->
 
         </div>
     </main>
@@ -506,17 +276,65 @@
             window.open(src, '_blank', 'noopener');
         }
 
-        // Thumbnails and the per-card buttons all carry their target on data attributes.
-        document.querySelectorAll('.shot').forEach(el => {
-            el.addEventListener('click', () => openModal(el.dataset.src, el.dataset.title));
-        });
+        // ---- The gallery, written out from demo.json ------------------
+        // Every card on this page is one entry in that file. Adding a
+        // simulation means adding an object to it, and nothing else.
+        const grid = document.querySelector('.grid');
+        const attr = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 
-        document.querySelectorAll('[data-open]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                if (btn.dataset.open === 'window') openWindow(btn.dataset.src);
-                else openModal(btn.dataset.src, btn.dataset.title);
+        function cardHTML(c) {
+            const src = attr(c.src), ttl = attr(c.modalTitle || c.title);
+            return '<article class="card">' +
+                     '<h2>' + c.title + '</h2>' +
+                     '<button class="shot" data-src="' + src + '" data-title="' + ttl + '"' +
+                             ' aria-label="Open ' + attr(c.title) + ' simulation">' +
+                       '<img src="' + attr(c.thumb) + '" alt="' + attr(c.alt) + '">' +
+                     '</button>' +
+                     '<div class="body">' +
+                       '<p>' + c.body + '</p>' +
+                       '<span class="tag">' + c.tag + '</span>' +
+                       '<div class="actions">' +
+                         '<button class="act primary" data-open="modal" data-src="' + src +
+                                 '" data-title="' + ttl + '">Open in Modal</button>' +
+                         '<button class="act" data-open="window" data-src="' + src + '">New Window</button>' +
+                       '</div>' +
+                     '</div>' +
+                   '</article>';
+        }
+
+        function render(data) {
+            if (data.title) document.querySelector('header h1').textContent = data.title;
+            if (data.subtitle) document.querySelector('header p').textContent = data.subtitle;
+            grid.innerHTML = (data.cards || []).map(cardHTML).join('');
+
+            // Thumbnails and the per-card buttons all carry their target on
+            // data attributes, so one pass over the grid wires the lot.
+            grid.querySelectorAll('.shot').forEach(el => {
+                el.addEventListener('click', () => openModal(el.dataset.src, el.dataset.title));
             });
-        });
+            grid.querySelectorAll('[data-open]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (btn.dataset.open === 'window') openWindow(btn.dataset.src);
+                    else openModal(btn.dataset.src, btn.dataset.title);
+                });
+            });
+        }
+
+        // demo.json is read live, so editing it is the whole of adding or
+        // reordering a simulation. It has to be fetched over http: a browser
+        // treats every file:// page as its own origin and will not let one
+        // read a file sitting beside it, so opening this page off the disk
+        // gets the note below rather than a silently empty gallery.
+        fetch('demo.json')
+            .then(r => r.ok ? r.json() : Promise.reject(r.status))
+            .then(render)
+            .catch(() => {
+                grid.innerHTML = '<p class="ui" style="color:var(--ink-mid);line-height:1.7">' +
+                    '<b>demo.json could not be read.</b><br>' +
+                    'This page has to be served rather than opened from the disk. From this ' +
+                    'folder run <code>python3 -m http.server</code> and open ' +
+                    '<code>http://localhost:8000/demo.html</code>.</p>';
+            });
 
         // document.getElementById('pop-out').addEventListener('click', () => {
         //     const src = currentSrc;

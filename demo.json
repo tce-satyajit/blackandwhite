@@ -1,0 +1,114 @@
+{
+  "title": "BLACK & WHITE",
+  "subtitle": "Interactive Simulations",
+  "cards": [
+    {
+      "title": "Analog Clock",
+      "modalTitle": "Analog Clock",
+      "src": "analogclock/index.html",
+      "thumb": "analogclock/thumb.png",
+      "alt": "Pendulum clock on a stand, with the movement visible behind the dial",
+      "tag": "Grade 8–10 · Physics",
+      "body": "Only one part of a clock keeps time, and it is not the gears. The pendulum is the ruler and the wheels are a counter — 43 200 beats to one turn of the hour hand. Take the dial and the case away to watch the train do the counting, then move the rating nut one millimetre and watch 43 seconds a day appear out of nowhere."
+    },
+    {
+      "title": "6-Axis Robot Arm",
+      "modalTitle": "6-Axis Robot Arm",
+      "src": "6axisarm/index.html",
+      "thumb": "6axisarm/thumb.png",
+      "alt": "Industrial robot arm lifting a carton onto a moving conveyor",
+      "tag": "Grade 8–11 · Physics",
+      "body": "An industrial arm picking parts off a table and setting them on a moving belt. Six revolute joints, solved with the cosine rule; watch the shoulder torque climb as the load goes out to arm's length, and find the acceleration that pulls the part off the tool."
+    },
+    {
+      "title": "3D Printer",
+      "modalTitle": "3D Printer Simulator",
+      "src": "3dprinter/index.html",
+      "thumb": "3dprinter/thumb.png",
+      "alt": "3D printer building an object layer by layer",
+      "tag": "Grade 8–11 · Physics",
+      "body": "How a machine builds a solid object by adding one layer at a time. Set the layer height, speed and temperatures, watch the X, Y and Z axes move as the nozzle traces each slice, and print the pot in four colours off the four-spool AMS. Slow motion drops it to real time, to watch a single line actually go down."
+    },
+    {
+      "title": "Bench Drill",
+      "modalTitle": "Bench Drill",
+      "src": "benchdrill/index.html",
+      "thumb": "benchdrill/thumb.png",
+      "alt": "Bench drill with the belt drive visible through a clear guard",
+      "tag": "Grade 8–10 · Physics",
+      "body": "One motor at one speed, and a belt on five pairs of pulleys to turn it into five. Move the belt and watch speed and turning effort trade off exactly. Then try to stall it: on the low steps the belt slips first, on the high ones the motor gives out — and changing gear turns out to be no help at all against the second one."
+    },
+    {
+      "title": "Centre Lathe",
+      "modalTitle": "Centre Lathe",
+      "src": "lathe/index.html",
+      "thumb": "lathe/thumb.png",
+      "alt": "Centre lathe turning a bar down in the chuck",
+      "tag": "Grade 8–10 · Physics",
+      "body": "The machine where the cutting speed will not stay put. Every pass makes the bar thinner, so the speed the edge sees falls away while you work — and facing to the centre takes it to zero. The companion piece to the bench drill, and it inverts the drill’s lesson: here, spinning faster really does finish the job sooner."
+    },
+    {
+      "title": "Walschaerts Valve Gear",
+      "modalTitle": "Walschaerts Valve Gear Simulator",
+      "src": "steamengine/index.html",
+      "thumb": "steamengine/thumb.png",
+      "alt": "Steam locomotive valve gear simulation",
+      "tag": "Grade 8–10 · Physics",
+      "body": "How a locomotive times steam into a double-acting cylinder. Adjust cut-off and reversing, watch the piston valve distribute live and exhaust steam, and hear the exhaust beat."
+    },
+    {
+      "title": "Rotary to Linear Motion",
+      "modalTitle": "Rotary to Linear Motion",
+      "src": "grashof/index.html",
+      "thumb": "grashof/thumb.png",
+      "alt": "Crank-rocker and rack simulation",
+      "tag": "Grade 8–10 · Physics",
+      "body": "A crank-rocker driving a toothed rack. Vary the crank length to cross the Grashof limit and see continuous rotation give way to a linkage that can no longer turn."
+    },
+    {
+      "title": "Scotch Yoke Mechanism",
+      "modalTitle": "Scotch Yoke Mechanism",
+      "src": "scotchyoke/index.html",
+      "thumb": "scotchyoke/thumb.png",
+      "alt": "Scotch yoke mechanism simulation",
+      "tag": "Grade 8–10 · Physics",
+      "body": "A pin running in a slotted yoke, turning rotation into <em>exact</em> simple harmonic motion. Watch displacement trace a true cosine while the crank turns steadily."
+    },
+    {
+      "title": "Aircraft Landing Gear",
+      "modalTitle": "Aircraft Landing Gear",
+      "src": "landinggear/index.html",
+      "thumb": "landinggear/thumb.png",
+      "alt": "Aircraft landing gear physics simulation",
+      "tag": "Grade 9–10 · Physics",
+      "body": "Land an airliner and watch the strut absorb it. Momentum, impulse and Hooke’s law, with live force and compression graphs showing why a longer impact means a gentler one."
+    },
+    {
+      "title": "Car Gearbox",
+      "modalTitle": "Car Gearbox",
+      "src": "cargearbox/index.html",
+      "thumb": "cargearbox/thumb.png",
+      "alt": "Car gearbox physics simulation",
+      "tag": "Grade 8–10 · Physics",
+      "body": "Start the engine, pick a gear and drive. Watch a small gear turn a big one into strong slow torque — and see on the dials why a hill wants first gear and a motorway wants fifth."
+    },
+    {
+      "title": "Differential Gear — 2D",
+      "modalTitle": "Differential Gear — 2D",
+      "src": "differential2d/index.html",
+      "thumb": "differential2d/thumb.png",
+      "alt": "Differential gear physics simulation",
+      "tag": "Grade 8–11 · Physics",
+      "body": "Round a bend the outer wheel has further to go. Watch the spider gears spin to let it, check that the two wheel speeds always average to the carrier — then put one wheel on ice and see why the car goes nowhere."
+    },
+    {
+      "title": "Differential Gear — 3D",
+      "modalTitle": "Differential Gear — 3D",
+      "src": "differential3d/index.html",
+      "thumb": "differential3d/thumb.png",
+      "alt": "Differential gear 3D model simulation",
+      "tag": "Grade 8–11 · Physics",
+      "body": "The same physics on a real three-dimensional differential you can turn round and look into. Hold one wheel still and watch the other run at exactly twice the carrier speed."
+    }
+  ]
+}
