@@ -213,3 +213,20 @@ body.controls-off #btn-show {
 #stat-vc     { min-width: 5ch; }   /* toFixed(1), e.g. "123.5" */
 #stat-torque { min-width: 5ch; }   /* toFixed(2), e.g. "12.34" */
 #stat-power  { min-width: 4ch; }   /* watts, up to four digits */
+
+/* ---- The chips lose their pill -------------------------------
+   Each chip already carries a checkbox, and the checkbox already says
+   whether it is on. A filled pill behind it says the same thing twice,
+   and says it in the language of a button that has been pressed rather
+   than a box that has been ticked.
+
+   Both states go, not just one: leaving the off state filled was worse
+   than leaving both, because it read as the on state to anyone who did
+   not look at the box itself. The hover fill goes with them - the label
+   is still a pointer target, and a pill appearing under the cursor is
+   the same button language coming back. */
+#panel [id^="chip-"],
+#panel [id^="chip-"]:hover {
+    background-color: transparent !important;
+    border-color: transparent !important;
+}
