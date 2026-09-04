@@ -349,7 +349,7 @@ function init3D() {
     // allow, so this costs nothing and buys a great deal.
     camera = new THREE.PerspectiveCamera(42, 1, 20, 11000);
     // opens on the Tool view, which rides along with the tool point
-    camera.position.set(1220, 1350, 900);
+    camera.position.set(3373, 1692, 3037);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -364,7 +364,7 @@ function init3D() {
     controls.maxDistance = 9000;
     controls.maxPolarAngle = Math.PI / 2 + 0.02;
     controls.autoRotateSpeed = 0.9;
-    controls.target.set(520, 850, 0);
+    controls.target.set(100, 130, 0);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.62));
     const key = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -1619,10 +1619,16 @@ const VIEWS = {
     cell:  { pos: [3560, 3101, 3954], tgt: [0, 621, 0] },
     front: { pos: [169, 1740, 4844],  tgt: [0, 621, 0] },
     top:   { pos: [28, 5867, 405],    tgt: [0, 60, 0] },
-    arm:   { pos: [1833, 1463, 1511], tgt: [155, 686, 0] },
+    // Far enough back, and aimed low enough, that the whole arm and the
+    // bench it works over sit above the control panel with it open.
+    arm:   { pos: [3373, 1692, 3037], tgt: [100, 130, 0] },
     tool:  { pos: [1220, 1350, 900],  tgt: [520, 850, 0] }
 };
-let camFrom = null, camTo = null, camT = 1, camFollow = true;
+// Starts on the static Arm view, not the tool follow-cam: the follow-cam
+// rides the tool point every frame and would overwrite the framing below,
+// which is set so the whole arm clears the control panel. Pressing Tool
+// still hands the camera back to the follow-cam.
+let camFrom = null, camTo = null, camT = 1, camFollow = false;
 // Where the Tool view sits relative to the tool point. The arm always
 // reaches out from the robot in the middle of the cell, so a camera on
 // the same side as the arm ends up looking straight down the forearm at
