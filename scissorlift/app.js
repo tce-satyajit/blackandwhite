@@ -253,6 +253,42 @@ function hazardTexture() {
     return hazTex;
 }
 
+// The ribbed rubber mat on the deck. Ribs, not a flat black slab: a
+// load standing on bare steel slides, and the ribs are what stop it -
+// which is also why every one of these has them, and why they run
+// across the deck rather than along it. One tile is 120 mm of matting,
+// mapped in millimetres like the timber, so the ribs come out the same
+// size whatever they are laid on.
+const RIB_TILE = 120, RIBS_PER_TILE = 32;
+let ribTex = null;
+function rubberMatTexture() {
+    if (ribTex) return ribTex;
+    const S = 256;
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    g.fillStyle = '#151618';
+    g.fillRect(0, 0, S, S);
+    const p = S / RIBS_PER_TILE;
+    for (let i = 0; i < RIBS_PER_TILE; i++) {
+        const x = i * p;
+        // Each rib is a rounded ridge, so it is dark in the valley on
+        // either side and catches the light along its crown.
+        const grad = g.createLinearGradient(x, 0, x + p, 0);
+        grad.addColorStop(0.00, '#0b0c0d');
+        grad.addColorStop(0.38, '#3a3e43');
+        grad.addColorStop(0.58, '#2b2e32');
+        grad.addColorStop(1.00, '#0b0c0d');
+        g.fillStyle = grad;
+        g.fillRect(x, 0, p, S);
+    }
+    ribTex = new THREE.CanvasTexture(c);
+    ribTex.wrapS = ribTex.wrapT = THREE.RepeatWrapping;
+    ribTex.repeat.set(1 / RIB_TILE, 1 / RIB_TILE);
+    ribTex.anisotropy = 8;
+    return ribTex;
+}
+
 // The maker's plate, done the way the bench drill does it: a plain grey
 // plate with the name across it and nothing else on it at all. A riveted
 // plate, not paint - which is why it has an edge and sits on the side
@@ -551,14 +587,19 @@ function init3D() {
     grid3 = new THREE.GridHelper(14000, 70, 0x334155, 0x1e293b);
     scene.add(grid3);
 
-    // The machine-tool palette, the same one the lathe wears: pale cream
-    // enamel over cast iron, everything that drives it in dark grey, and
-    // bare machined steel where the two meet. It is what a machine built
-    // to be worked on looks like, rather than one built to be seen
-    // across a yard - and it lets the hazard striping and the beacon do
-    // the shouting instead of the whole machine doing it at once.
-    MAT.body     = new THREE.MeshStandardMaterial({ color: 0xded7c4, metalness: 0.12, roughness: 0.62 });
-    MAT.bodyDark = new THREE.MeshStandardMaterial({ color: 0xcec6b1, metalness: 0.10, roughness: 0.66 });
+    // Yellow enamel on the frame, black on the linkage, bare steel where
+    // the two meet - the scheme every scissor jack in a workshop wears,
+    // and it is worn for a reason: the frame is the part you must not
+    // walk into and the linkage is the part you must not put a hand in,
+    // so the two are painted the two colours nobody confuses.
+    MAT.body     = new THREE.MeshStandardMaterial({ color: 0xf7b500, metalness: 0.22, roughness: 0.36 });
+    MAT.bodyDark = new THREE.MeshStandardMaterial({ color: 0xd09400, metalness: 0.22, roughness: 0.42 });
+    // The arms are the other half of the scheme. Painting the moving
+    // linkage black against a yellow frame is not decoration: it is the
+    // one part that changes shape, and black against yellow is the
+    // easiest pairing there is to read the shape of.
+    MAT.arm      = new THREE.MeshStandardMaterial({ color: 0x202328, metalness: 0.30, roughness: 0.44 });
+    MAT.armDark  = new THREE.MeshStandardMaterial({ color: 0x17191d, metalness: 0.30, roughness: 0.48 });
     // Machined steel, not polished steel. A shaft through a pin joint
     // comes off a lathe and then spends its life in grease and grit: it
     // is a dull grey, and it has to be, because a near-mirror at this
@@ -571,9 +612,16 @@ function init3D() {
     MAT.tyre     = new THREE.MeshStandardMaterial({ color: 0xc6c9cc, metalness: 0.05, roughness: 0.55 });
     MAT.motor    = new THREE.MeshStandardMaterial({ color: 0x3d434c, metalness: 0.46, roughness: 0.44 });
     MAT.tank     = new THREE.MeshStandardMaterial({ color: 0x484d54, metalness: 0.70, roughness: 0.36 });
-    // The deck plate is a machined surface, not a painted one - the same
-    // grey as the lathe's saddle and cross-slide.
-    MAT.deck     = new THREE.MeshStandardMaterial({ color: 0x8d9299, metalness: 0.62, roughness: 0.34 });
+    // The deck plate is part of the frame and painted with it. What you
+    // actually stand a load on is the mat laid into it.
+    MAT.deck     = new THREE.MeshStandardMaterial({ color: 0xf7b500, metalness: 0.22, roughness: 0.36 });
+    MAT.mat      = (() => {
+        const tex = rubberMatTexture();
+        return new THREE.MeshStandardMaterial({
+            map: tex, bumpMap: tex, bumpScale: 0.7,
+            metalness: 0.02, roughness: 0.86
+        });
+    })();
     MAT.hose     = new THREE.MeshStandardMaterial({ color: 0x1a1c20, metalness: 0.2, roughness: 0.7 });
     // Three boards off the same stack, no two of them alike. Handing
     // them out in turn is what stops a crate reading as one moulding.
@@ -616,13 +664,17 @@ function init3D() {
                                                     emissive: BEACON_RED, emissiveIntensity: 0.1,
                                                     transparent: true, opacity: 0.92 });
 
-    // Enamel over cast iron reflects very little of the room, which is
-    // most of what separates it from the machined faces beside it.
-    MAT.body.envMapIntensity = 0.24;
-    MAT.bodyDark.envMapIntensity = 0.24;
+    // Enamel picks up a little of the room but nowhere near as much as
+    // the bare steel beside it, which is most of what separates a
+    // painted face from a machined one.
+    MAT.body.envMapIntensity = 0.45;
+    MAT.bodyDark.envMapIntensity = 0.45;
+    MAT.arm.envMapIntensity = 0.35;
+    MAT.armDark.envMapIntensity = 0.35;
     MAT.steel.envMapIntensity = 0.55;
     MAT.chrome.envMapIntensity = 2.4;
-    MAT.deck.envMapIntensity = 0.8;
+    MAT.deck.envMapIntensity = 0.45;
+    MAT.mat.envMapIntensity = 0.12;
     MAT.motor.envMapIntensity = 0.8;
     MAT.tank.envMapIntensity = 0.9;
     MAT.rubber.envMapIntensity = 0.2;
@@ -914,7 +966,7 @@ function buildBeacon() {
 function buildScissor() {
     [[armsL, ARM_Z_OUT, ARM_Z_IN], [armsU, ARM_Z_IN, ARM_Z_OUT]].forEach(([store, zA, zB]) => {
         [-1, 1].forEach(s => {
-            [['A', zA, MAT.body, 0], ['B', zB, MAT.bodyDark, 3]].forEach(([kind, z, mat, thin]) => {
+            [['A', zA, MAT.arm, 0], ['B', zB, MAT.armDark, 3]].forEach(([kind, z, mat, thin]) => {
                 const m = makeArm(mat, thin);
                 m.position.z = s * z;
                 store.push({ m: m, kind: kind });
@@ -1028,6 +1080,16 @@ function buildDeck() {
     plate.position.y = DECK_T - 13;
     plate.castShadow = plate.receiveShadow = true;
     deckGrp.add(plate);
+
+    // The mat, laid into the plate with the painted frame showing all
+    // round it. Its top stands a millimetre proud of the steel rather
+    // than flush with it - flush would put two surfaces in exactly the
+    // same plane, and that is the stipple all over again.
+    const matt = new THREE.Mesh(
+        roundedBox(DECK_X * 2 - 76, 10, DECK_Z * 2 - 76, 3), MAT.mat);
+    matt.position.y = DECK_T - 4;
+    matt.castShadow = matt.receiveShadow = true;
+    deckGrp.add(matt);
     // the skirt underneath, which is what the arms actually push on
     [-1, 1].forEach(s => {
         const side = new THREE.Mesh(roundedBox(DECK_X * 2, DECK_T - 26, 60, 8), MAT.body);
