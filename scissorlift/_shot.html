@@ -349,5 +349,21 @@
             else addEventListener('load', check);
         })();
     </script>
+
+<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get('th')) state.th = +q.get('th') * Math.PI / 180;
+    if (q.get('steer')) { P.steer = +q.get('steer'); }
+    if (q.get('crate') === '0') state.crate = false;
+    var p = (q.get('cam') || '2000,1250,2200').split(',').map(Number);
+    var t = (q.get('tgt') || '0,650,0').split(',').map(Number);
+    camera.position.set(p[0], p[1], p[2]);
+    controls.target.set(t[0], t[1], t[2]);
+    camT = 1;
+  }, 600);
+});
+</script>
 </body>
 </html>

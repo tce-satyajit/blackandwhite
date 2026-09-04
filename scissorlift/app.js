@@ -11,10 +11,13 @@ const G_ACC = 9.81;
 const ARM_L = 900;
 const STAGES = 2;
 const TH_MIN = 8 * Math.PI / 180;
-// 54.752 deg puts the deck top at exactly 1.80 m. Any higher and the
-// machine is taller than its own wheelbase is long, which looks - and
-// is - top heavy.
-const TH_MAX = 54.752 * Math.PI / 180;
+// 51.159 deg puts the deck top at exactly 1.80 m, which is what the
+// machine is sold as doing and so is not negotiable. It fell from
+// 54.752 when the chassis was raised onto bigger wheels: the pivot line
+// starts 68 mm higher, so the linkage has 68 mm less to find, and the
+// angle that finds it is smaller. Any higher and the machine is taller
+// than its own wheelbase is long, which looks - and is - top heavy.
+const TH_MAX = 51.159 * Math.PI / 180;
 
 // Where the rams are bolted on. RAM_P is measured along the base from
 // the fixed pivot, RAM_Q along the arm from the same pivot - so the ram,
@@ -29,7 +32,7 @@ const DECK_MASS = 420;                // deck, upper stage and rails
 const BASE_MASS = 380;                // base frame, power pack, wheels
 const WHEEL_X = 420;                  // how far out the wheels are - the tipping line
 
-const DEFAULTS = { load: 600, offset: 0, bore: 80, flow: 8, relief: 250 };
+const DEFAULTS = { load: 600, offset: 0, bore: 80, flow: 8, relief: 250, steer: 0 };
 const P = Object.assign({}, DEFAULTS);
 
 const state = {
@@ -116,8 +119,12 @@ const heightM = () => (deckY() + DECK_T) / 1000;
 // =============================================================
 // One millimetre is one unit. The lift stands on the floor at y = 0 and
 // travels straight up; x runs along the machine, z across it.
-const WHEEL_R = 95;
-const BASE_Y0 = 50;                   // the chassis hangs low between the wheels
+// Rough-terrain tyres, and the chassis carried clear above them. The
+// old 50 mm of ground clearance was less than a kerb: a machine that
+// has to be pushed across a yard has to be able to get over what is
+// lying in it, and that is what the clearance is for.
+const WHEEL_R = 135;
+const BASE_Y0 = 118;                  // the chassis underside, clear of the ground
 const BASE_H = 190;
 const PIVOT_Y = BASE_Y0 + BASE_H;     // the line the scissor is pinned on
 const FIX_X = -ARM_L / 2;             // the fixed pivots, which never move
@@ -127,6 +134,24 @@ const DECK_X = 750, DECK_Z = 450;
 const ARM_Z_OUT = 355, ARM_Z_IN = 295;
 const RAM_Z = 150;
 const ARM_W = 96, ARM_T = 26;         // the flat bar an arm is cut from
+
+// ---- how the wheels are hung ------------------------------------
+// Not on a stub axle straight into the chassis side: that is a mounting
+// that can never do anything but roll straight, and a machine you have
+// to push into position has to be able to point somewhere.
+//
+// So the front pair hang off a king pin - a vertical pivot bolted to
+// the chassis, just outboard of it - on a swing arm that carries the
+// hub. Everything from the king pin outwards turns; everything inboard
+// of it does not. The wheel has to sit far enough out that the tyre
+// clears the pivot boss as it swings, which is what sets WHEEL_Z.
+const WHEEL_W = 92;                   // across the tread
+const KING_Z = BASE_Z + 18;           // the king pin the arm swings about
+const WHEEL_Z = BASE_Z + 110;         // the wheel's own centre plane
+const TREAD_N = 22;                   // lugs round the tyre
+// The roller at the sliding end of each stage, and so how far below the
+// pivot line the rail it runs on has to sit.
+const ROLL_R = 38;
 
 // ---- what is actually on the deck -------------------------------
 // Not a cube. A timber crate banded down to a block pallet - and the
@@ -161,6 +186,9 @@ const loadShown = () => state.crate && P.load > 0;
 let scene, camera, renderer, controls;
 let floor3, grid3, liftGrp;
 let armsL = [], armsU = [], deckGrp, crateGrp;
+// The front pair of swing arms. Only these turn; the back pair are
+// fixed, which is what makes the machine track straight when pushed.
+const steerArms = [];
 // The parts of the load that have to move or come and go as the mass on
 // the slider changes. Everything is built once; nothing is rebuilt.
 const loadParts = { posts: [], rows: [], bands: [], lid: null, goods: null };
@@ -608,8 +636,6 @@ function init3D() {
     MAT.steel    = new THREE.MeshStandardMaterial({ color: 0xb9bfc9, metalness: 0.70, roughness: 0.52 });
     MAT.chrome   = new THREE.MeshStandardMaterial({ color: 0xc9cfd7, metalness: 0.98, roughness: 0.055 });
     MAT.rubber   = new THREE.MeshStandardMaterial({ color: 0x1b1e23, metalness: 0.04, roughness: 0.88 });
-    // Solid polyurethane, not rubber: pale, hard and slightly glossy.
-    MAT.tyre     = new THREE.MeshStandardMaterial({ color: 0xc6c9cc, metalness: 0.05, roughness: 0.55 });
     MAT.motor    = new THREE.MeshStandardMaterial({ color: 0x3d434c, metalness: 0.46, roughness: 0.44 });
     MAT.tank     = new THREE.MeshStandardMaterial({ color: 0x484d54, metalness: 0.70, roughness: 0.36 });
     // The deck plate is part of the frame and painted with it. What you
@@ -678,7 +704,6 @@ function init3D() {
     MAT.motor.envMapIntensity = 0.8;
     MAT.tank.envMapIntensity = 0.9;
     MAT.rubber.envMapIntensity = 0.2;
-    MAT.tyre.envMapIntensity = 0.5;
     MAT.wood.forEach(m => { m.envMapIntensity = 0.3; });
     MAT.block.envMapIntensity = 0.25;
     MAT.hazard.envMapIntensity = 0.7;
@@ -691,9 +716,40 @@ function init3D() {
 // =============================================================
 //  Building it
 // =============================================================
+// The dark under the machine. One directional light with one shadow map
+// gives a clean cast shadow and nothing else, so the gap between the
+// ground and a chassis standing 118 mm above it comes out as brightly
+// lit as the open floor - and a machine with daylight under it does not
+// look like it is standing on anything. This is the ambient darkness
+// that gap really has: light that gets in there has nowhere to bounce.
+//
+// Built from stacked rectangles rather than a blur, because canvas
+// filters are not something to rely on, and rather than a radial
+// gradient, because what is casting it is a rectangle.
+function buildGroundShade() {
+    const S = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(0,0,0,0.055)';
+    for (let i = 0; i < 24; i++) {
+        const inset = 6 + (i / 23) * 48;
+        g.fillRect(inset, inset, S - inset * 2, S - inset * 2);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(BASE_X * 2.45, (BASE_Z + 40) * 2.35),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = 2;                  // clear of the floor, under everything else
+    m.renderOrder = 1;
+    liftGrp.add(m);
+}
+
 function buildLift() {
     liftGrp = new THREE.Group();
     scene.add(liftGrp);
+    buildGroundShade();
     buildBase();
     buildWheels();
     buildPowerPack();
@@ -730,9 +786,15 @@ function buildBase() {
         bump.castShadow = true;
         g.add(bump);
 
-        // the track the lower roller runs along
-        const track = new THREE.Mesh(roundedBox(BASE_X * 1.7, 22, 34, 5), MAT.steel);
-        track.position.set(60, PIVOT_Y - 10, s2 * (BASE_Z - 75));
+        // The track the lower roller runs along. Where it sits is not a
+        // free choice: the roller's pin is on the pivot line, so the rail
+        // it rides on has to be exactly one roller radius below that,
+        // and one rail half-thickness below again. Put it any higher -
+        // as it was - and the rail passes straight through the cross
+        // shafts and their collars, which is what you see as a rail with
+        // a shaft growing out of it.
+        const track = new THREE.Mesh(roundedBox(BASE_X * 1.7, 22, 44, 5), MAT.steel);
+        track.position.set(60, PIVOT_Y - ROLL_R - 11, s2 * (ARM_Z_IN + 40));
         g.add(track);
     });
 
@@ -772,47 +834,95 @@ function buildBase() {
 // because a pneumatic tyre under a tonne would squash and let the deck
 // rock - and these are also the tipping line, so where they sit decides
 // everything the machine is allowed to carry.
+// One wheel, built about its own centre: carcass, tread, rim and hub.
+// It knows nothing about where it is on the machine or which way it is
+// pointing - that is the arm's business.
+function makeWheel(g) {
+    const hw = WHEEL_W / 2;
+    // The carcass stops short of the rolling radius; the tread blocks
+    // make up the rest, so the wheel still stands exactly WHEEL_R high.
+    const carc = WHEEL_R - 16;
+    const tyre = new THREE.Mesh(new THREE.LatheGeometry([
+        new THREE.Vector2(58, -hw + 6), new THREE.Vector2(carc - 26, -hw),
+        new THREE.Vector2(carc - 6, -hw + 10), new THREE.Vector2(carc, -hw + 26),
+        new THREE.Vector2(carc, hw - 26), new THREE.Vector2(carc - 6, hw - 10),
+        new THREE.Vector2(carc - 26, hw), new THREE.Vector2(58, hw - 6)
+    ], 40), MAT.rubber);
+    tyre.rotation.x = Math.PI / 2;
+    tyre.castShadow = true;
+    g.add(tyre);
+
+    // The tread. Blocks round the circumference with the gaps between
+    // them, which is the whole difference between a tyre that grips a
+    // yard and a castor off an office chair.
+    for (let i = 0; i < TREAD_N; i++) {
+        const a = i * Math.PI * 2 / TREAD_N;
+        const lug = new THREE.Mesh(roundedBox(26, 26, WHEEL_W - 14, 5), MAT.rubber);
+        lug.position.set(Math.cos(a) * (WHEEL_R - 13), Math.sin(a) * (WHEEL_R - 13), 0);
+        lug.rotation.z = a + Math.PI / 2;
+        lug.castShadow = true;
+        g.add(lug);
+    }
+
+    // The rim is painted with the machine, which is why it is the one
+    // bright thing inside all that black.
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(62, 62, WHEEL_W + 2, 32), MAT.body);
+    rim.rotation.x = Math.PI / 2;
+    rim.castShadow = true;
+    g.add(rim);
+    const dish = new THREE.Mesh(new THREE.CylinderGeometry(40, 40, WHEEL_W + 16, 24), MAT.bodyDark);
+    dish.rotation.x = Math.PI / 2;
+    g.add(dish);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(17, 17, WHEEL_W + 26, 16), MAT.steel);
+    cap.rotation.x = Math.PI / 2;
+    g.add(cap);
+    for (let i = 0; i < 6; i++) {            // the studs round the hub
+        const a = i * Math.PI * 2 / 6;
+        const b = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, WHEEL_W + 22, 10), MAT.steel);
+        b.rotation.x = Math.PI / 2;
+        b.position.set(Math.cos(a) * 28, Math.sin(a) * 28, 0);
+        g.add(b);
+    }
+}
+
 function buildWheels() {
     [-1, 1].forEach(sx => [-1, 1].forEach(sz => {
-        const g = new THREE.Group();
-
-        const tyre = new THREE.Mesh(new THREE.LatheGeometry([
-            new THREE.Vector2(34, -34), new THREE.Vector2(WHEEL_R - 16, -34),
-            new THREE.Vector2(WHEEL_R - 3, -26), new THREE.Vector2(WHEEL_R, -12),
-            new THREE.Vector2(WHEEL_R, 12), new THREE.Vector2(WHEEL_R - 3, 26),
-            new THREE.Vector2(WHEEL_R - 16, 34), new THREE.Vector2(34, 34)
-        ], 34), MAT.tyre);
-        tyre.rotation.x = Math.PI / 2;
-        tyre.castShadow = true;
-        g.add(tyre);
-
-        const rim = new THREE.Mesh(new THREE.CylinderGeometry(38, 38, 72, 26), MAT.motor);
-        rim.rotation.x = Math.PI / 2;
-        rim.castShadow = true;
-        g.add(rim);
-        const cap = new THREE.Mesh(new THREE.CylinderGeometry(19, 19, 80, 18), MAT.steel);
-        cap.rotation.x = Math.PI / 2;
-        g.add(cap);
-        for (let i = 0; i < 5; i++) {            // the bolts round the hub
-            const a = i * Math.PI * 2 / 5;
-            const b = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 78, 10), MAT.steel);
-            b.rotation.x = Math.PI / 2;
-            b.position.set(Math.cos(a) * 27, Math.sin(a) * 27, 0);
-            g.add(b);
-        }
-
-        // the stub axle back into the chassis, and its mounting boss
-        const stub = new THREE.Mesh(new THREE.CylinderGeometry(26, 26, 90, 16), MAT.steel);
-        stub.rotation.x = Math.PI / 2;
-        stub.position.z = -sz * 62;
-        g.add(stub);
-        const boss = new THREE.Mesh(roundedBox(120, 120, 26, 12), MAT.bodyDark);
-        boss.position.z = -sz * 100;
+        // What is bolted to the chassis and stays put: a bracket off the
+        // side, and the king-pin boss it carries.
+        const bracket = new THREE.Mesh(roundedBox(150, 96, 60, 10), MAT.body);
+        bracket.position.set(sx * WHEEL_X, WHEEL_R + 14, sz * (BASE_Z + 4));
+        bracket.castShadow = true;
+        liftGrp.add(bracket);
+        const boss = new THREE.Mesh(new THREE.CylinderGeometry(30, 30, 132, 20), MAT.bodyDark);
+        boss.position.set(sx * WHEEL_X, WHEEL_R + 14, sz * KING_Z);
         boss.castShadow = true;
-        g.add(boss);
+        liftGrp.add(boss);
 
-        g.position.set(sx * WHEEL_X, WHEEL_R, sz * (BASE_Z + 62));
-        liftGrp.add(g);
+        // And what swings: everything from the king pin outwards. The
+        // arm is a child of nothing but this pivot, so turning the group
+        // turns the hub, the wheel and the tread together, exactly the
+        // way a knuckle does.
+        const arm = new THREE.Group();
+        arm.position.set(sx * WHEEL_X, WHEEL_R, sz * KING_Z);
+
+        const kingPin = new THREE.Mesh(new THREE.CylinderGeometry(17, 17, 168, 16), MAT.steel);
+        kingPin.position.y = 14;
+        arm.add(kingPin);
+        const reach = WHEEL_Z - KING_Z;
+        const yoke = new THREE.Mesh(roundedBox(104, 86, reach, 12), MAT.bodyDark);
+        yoke.position.z = sz * reach / 2;
+        yoke.castShadow = true;
+        arm.add(yoke);
+
+        const hub = new THREE.Group();
+        hub.position.z = sz * reach;
+        makeWheel(hub);
+        arm.add(hub);
+
+        // Only the front pair steer, which is how these are built: the
+        // back pair are there to be pushed, not aimed.
+        if (sx > 0) steerArms.push(arm);
+        liftGrp.add(arm);
     }));
 }
 
@@ -915,11 +1025,11 @@ function makeArm(mat, thin) {
 
 function makeRoller() {
     const g = new THREE.Group();
-    const w = new THREE.Mesh(new THREE.CylinderGeometry(38, 38, 44, 22), MAT.steel);
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(ROLL_R, ROLL_R, 44, 22), MAT.steel);
     w.rotation.x = Math.PI / 2;
     w.castShadow = true;
     g.add(w);
-    const t = new THREE.Mesh(new THREE.TorusGeometry(38, 7, 8, 24), MAT.rubber);
+    const t = new THREE.Mesh(new THREE.TorusGeometry(ROLL_R, 7, 8, 24), MAT.rubber);
     g.add(t);
     return g;
 }
@@ -1378,6 +1488,12 @@ function update3D() {
     joints.M.position.set(midX, y1 + h / 2, 0);
     updateLoad(y2);
 
+    // Steering. Both front arms take the same angle - no Ackermann here,
+    // since nothing on this page is asked to roll far enough to care
+    // that the inner wheel should turn further than the outer one.
+    const lock = P.steer * Math.PI / 180;
+    steerArms.forEach(a => { a.rotation.y = lock; });
+
     // the rams, from the cosine-rule triangle
     const bx = FIX_X + RAM_P, by = y0;
     const rx = FIX_X + RAM_Q * c, ry = y0 + RAM_Q * s;
@@ -1474,7 +1590,7 @@ const VIEWS = {
     scissor: { pos: [1500, 1150, 1600], tgt: [-40, 720, 60] },
     ram:     { pos: [520, 640, 900],    tgt: [-20, 490, 150] },
     pack:    { pos: [-620, 520, 880],   tgt: [-160, 250, 0] },
-    wheel:   { pos: [820, 330, 800],    tgt: [420, 100, 400] },
+    wheel:   { pos: [1000, 470, 1120],  tgt: [420, 150, 470] },
     deck:    { pos: [1600, 2500, 2000], tgt: [0, 1700, 0] }
 };
 let camFrom = null, camTo = null, camT = 1;
@@ -1658,7 +1774,7 @@ function reset() {
     state.th = TH_MIN; state.cmd = 0; state.warn = 0;
     state.motion = 0; state.lastDir = 0;
     soundStop();
-    ['load', 'offset', 'bore', 'flow', 'relief'].forEach(k => {
+    ['load', 'offset', 'bore', 'flow', 'relief', 'steer'].forEach(k => {
         $('s-' + k).value = P[k];
         $('v-' + k).textContent = P[k];
     });
@@ -1672,7 +1788,7 @@ function bindSlider(id, key, after) {
         if (after) after();
     });
 }
-['load', 'offset', 'bore', 'flow', 'relief'].forEach(k => bindSlider('s-' + k, k));
+['load', 'offset', 'bore', 'flow', 'relief', 'steer'].forEach(k => bindSlider('s-' + k, k));
 
 function paintRun() {
     $('btn-up').classList.toggle('bg-slate-900', state.cmd >= 0);
