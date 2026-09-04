@@ -56,12 +56,17 @@
         </div>
     </header>
 
-    <main class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+    <main id="main" class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
 
-        <div class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+        <div id="stagecard" class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
 
             <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
                 <div id="view3d" class="absolute inset-0"></div>
+
+                <button id="btn-wide" title="Hide the controls (Esc)" aria-label="Hide the controls"
+                        class="absolute top-3 right-3 z-30 w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </button>
 
                 <!-- the three machine axes, live -->
                 <div id="axisbox" class="hidden absolute top-3 left-3 z-20">
@@ -108,7 +113,7 @@
                  them, so the bar is half the height it was and the machine gets
                  the space back. Below xl there is not room for that, so it falls
                  back to stacking. -->
-            <div class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col xl:flex-row gap-2">
+            <div id="panel" class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col xl:flex-row gap-2">
 
                 <div class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-2 gap-2 xl:w-[380px] shrink-0">
                     <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">

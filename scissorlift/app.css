@@ -166,3 +166,29 @@ body.controls-off #panel {
 #panel .text-slate-900,
 #panel label,
 #panel .mono { color: #000 !important; }
+
+/* The selected segment keeps its fill.
+   .mseg/.vseg/.wseg/.sseg/... set it in plain CSS rather than through a
+   utility class, so the transparent-background rule above outranks them
+   - and without this the row of view, model and filament buttons has no
+   way at all of showing which one is selected. Matched on the class
+   containing "seg" so it covers every one of them, including the ones
+   this project has not added yet. */
+#panel [class*="seg"].on,
+#panel .bg-white.on {
+    /* background-color, not the background shorthand: the shorthand also
+       resets background-image, and the utility class it has to beat sets
+       the longhand - so longhand against longhand is the comparison that
+       actually decides this. */
+    background-color: #0f172a !important;
+    color: #ffffff !important;
+}
+
+/* Some of these pages split their controls across two bars. Both are
+   wrapped in #panel, so the bars themselves have to give up the fill and
+   the rule between them - otherwise the floating card has two opaque
+   stripes inside it and the seam still shows. */
+#panel > div {
+    background-color: transparent !important;
+    border-top-color: transparent !important;
+}

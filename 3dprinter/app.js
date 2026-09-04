@@ -1964,3 +1964,43 @@ diffuseColor.rgb *= mix(0.72, 1.0, band);`);
           setTimeout(hideLoader, 400);
           requestAnimationFrame(frame);
       };
+
+
+// =============================================================
+//  Show and hide the control panel
+// =============================================================
+// The panel floats over the view, so this uncovers the model rather than
+// resizing anything - the canvas is always the full size of the window
+// under the header, and nothing here has to tell the renderer otherwise.
+//
+// The one rule is that the way back has to stay on screen: the button
+// sits over the view rather than in the panel it hides, or turning this
+// on would be a one-way door.
+(function () {
+    const btn = document.getElementById('btn-wide');
+    if (!btn) return;
+
+    function paintControls() {
+        const off = document.body.classList.contains('controls-off');
+        btn.innerHTML = off ? '<i class="fa-solid fa-sliders"></i>'
+                            : '<i class="fa-solid fa-chevron-down"></i>';
+        btn.title = off ? 'Show the controls' : 'Hide the controls (Esc)';
+        btn.setAttribute('aria-label', btn.title);
+    }
+    function setControls(off) {
+        document.body.classList.toggle('controls-off', off);
+        paintControls();
+    }
+    btn.addEventListener('click',
+        () => setControls(!document.body.classList.contains('controls-off')));
+
+    // Escape backs out of the panel - but only once the explainer is out
+    // of the way, since this page already uses Escape to close that and
+    // one key should not do two things at once.
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const modal = document.getElementById('info-modal');
+        if (modal && !modal.classList.contains('hidden')) return;
+        if (!document.body.classList.contains('controls-off')) setControls(true);
+    });
+})();

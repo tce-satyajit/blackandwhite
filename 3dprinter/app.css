@@ -195,3 +195,92 @@ input[type=range]:focus-visible::-webkit-slider-thumb {
     color: #cbd5e1;
 }
 .sim-note.dark b, .sim-note.dark .hd { color: #f1f5f9; }
+
+
+/* ---- The controls float over the view ------------------------
+   The view is always the full size of the window under the header. The
+   control panel is not a slice taken out of it - it sits on top, so
+   hiding it uncovers the model rather than resizing the canvas.
+
+   That is worth doing for more than tidiness: the renderer only has to
+   be told about a size change that actually happens, and toggling the
+   panel is no longer one, so it costs nothing but a transform.
+
+   The header stays either way. It is not chrome in the way the panel is
+   - it is the read-out, and those numbers are exactly what you want in
+   front of you while watching the thing work. */
+#panel {
+    position: absolute;
+    left: 10px; right: 10px; bottom: 10px;
+    z-index: 25;
+    background: rgba(248, 250, 252, 0.44);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border-radius: 15px;
+    /* A card floating clear of the frame needs its own edge, or it reads
+       as a smudge on the glass rather than a panel sitting on top of it. */
+    border: 1px solid rgba(226, 232, 240, 0.7);
+    box-shadow: 0 8px 24px -6px rgba(15, 23, 42, 0.25);
+    transition: transform .22s ease, opacity .18s ease;
+}
+body.controls-off #panel {
+    transform: translateY(calc(100% + 14px));
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* ---- The controls, flattened ---------------------------------
+   The panel is already a card floating over the view. Giving every
+   control inside it another card stacks three shades of white on top of
+   the model and reads as a form rather than a control surface - so
+   inside the panel nothing has a fill, a border or a shadow of its own,
+   and everything is set in black.
+
+   Two things deliberately keep their fill, because losing it would lose
+   information rather than decoration:
+
+     .bg-slate-900  the pressed state of a button or the selected view -
+                    the only thing saying which one is active;
+     .bg-slate-100  the off state of a chip, which is how an unticked
+                    chip reads as unticked.
+
+   And .text-white is left alone, since it is what sits on those fills. */
+#panel .bg-white { background-color: transparent !important; }
+#panel .border,
+#panel .border-slate-200 { border-color: transparent !important; }
+#panel .shadow-sm,
+#panel .shadow { box-shadow: none !important; }
+
+#panel .text-slate-400,
+#panel .text-slate-500,
+#panel .text-slate-600,
+#panel .text-slate-700,
+#panel .text-slate-900,
+#panel label,
+#panel .mono { color: #000 !important; }
+
+/* The selected segment keeps its fill.
+   .mseg/.vseg/.wseg/.sseg/... set it in plain CSS rather than through a
+   utility class, so the transparent-background rule above outranks them
+   - and without this the row of view, model and filament buttons has no
+   way at all of showing which one is selected. Matched on the class
+   containing "seg" so it covers every one of them, including the ones
+   this project has not added yet. */
+#panel [class*="seg"].on,
+#panel .bg-white.on {
+    /* background-color, not the background shorthand: the shorthand also
+       resets background-image, and the utility class it has to beat sets
+       the longhand - so longhand against longhand is the comparison that
+       actually decides this. */
+    background-color: #0f172a !important;
+    color: #ffffff !important;
+}
+
+/* Some of these pages split their controls across two bars. Both are
+   wrapped in #panel, so the bars themselves have to give up the fill and
+   the rule between them - otherwise the floating card has two opaque
+   stripes inside it and the seam still shows. */
+#panel > div {
+    background-color: transparent !important;
+    border-top-color: transparent !important;
+}
