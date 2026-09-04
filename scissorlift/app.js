@@ -253,6 +253,26 @@ function hazardTexture() {
     return hazTex;
 }
 
+// The maker's plate, done the way the bench drill does it: a plain grey
+// plate with the name across it and nothing else on it at all. A riveted
+// plate, not paint - which is why it has an edge and sits on the side
+// rather than being part of it.
+let badgeTex = null;
+function badgeTexture() {
+    if (badgeTex) return badgeTex;
+    const c = document.createElement('canvas');
+    c.width = 368; c.height = 100;
+    const g = c.getContext('2d');
+    g.fillStyle = '#999999'; g.fillRect(0, 0, 368, 100);
+    g.fillStyle = '#ffffff';
+    g.font = 'bold 58px Inter, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('TCE-LAB', 184, 53);
+    badgeTex = new THREE.CanvasTexture(c);
+    badgeTex.anisotropy = 8;
+    return badgeTex;
+}
+
 // =============================================================
 //  Timber, and the marks sprayed on it
 // =============================================================
@@ -531,23 +551,29 @@ function init3D() {
     grid3 = new THREE.GridHelper(14000, 70, 0x334155, 0x1e293b);
     scene.add(grid3);
 
-    // Plant yellow over steel - the colour anything that moves under a
-    // load in a yard gets painted, for the same reason a hi-vis jacket is.
-    MAT.body     = new THREE.MeshStandardMaterial({ color: 0xd9a516, metalness: 0.30, roughness: 0.42 });
-    MAT.bodyDark = new THREE.MeshStandardMaterial({ color: 0xa87c0c, metalness: 0.32, roughness: 0.48 });
+    // The machine-tool palette, the same one the lathe wears: pale cream
+    // enamel over cast iron, everything that drives it in dark grey, and
+    // bare machined steel where the two meet. It is what a machine built
+    // to be worked on looks like, rather than one built to be seen
+    // across a yard - and it lets the hazard striping and the beacon do
+    // the shouting instead of the whole machine doing it at once.
+    MAT.body     = new THREE.MeshStandardMaterial({ color: 0xded7c4, metalness: 0.12, roughness: 0.62 });
+    MAT.bodyDark = new THREE.MeshStandardMaterial({ color: 0xcec6b1, metalness: 0.10, roughness: 0.66 });
     // Machined steel, not polished steel. A shaft through a pin joint
     // comes off a lathe and then spends its life in grease and grit: it
     // is a dull grey, and it has to be, because a near-mirror at this
     // roughness reflects the environment map almost pixel for pixel and
     // the joints come out blown white and blotchy rather than round.
-    MAT.steel    = new THREE.MeshStandardMaterial({ color: 0x939ba6, metalness: 0.72, roughness: 0.58 });
+    MAT.steel    = new THREE.MeshStandardMaterial({ color: 0xb9bfc9, metalness: 0.70, roughness: 0.52 });
     MAT.chrome   = new THREE.MeshStandardMaterial({ color: 0xc9cfd7, metalness: 0.98, roughness: 0.055 });
-    MAT.rubber   = new THREE.MeshStandardMaterial({ color: 0x22252a, metalness: 0.04, roughness: 0.88 });
+    MAT.rubber   = new THREE.MeshStandardMaterial({ color: 0x1b1e23, metalness: 0.04, roughness: 0.88 });
     // Solid polyurethane, not rubber: pale, hard and slightly glossy.
     MAT.tyre     = new THREE.MeshStandardMaterial({ color: 0xc6c9cc, metalness: 0.05, roughness: 0.55 });
-    MAT.motor    = new THREE.MeshStandardMaterial({ color: 0x2d323a, metalness: 0.52, roughness: 0.44 });
-    MAT.tank     = new THREE.MeshStandardMaterial({ color: 0x3c434c, metalness: 0.62, roughness: 0.34 });
-    MAT.deck     = new THREE.MeshStandardMaterial({ color: 0xb4bac2, metalness: 0.66, roughness: 0.36 });
+    MAT.motor    = new THREE.MeshStandardMaterial({ color: 0x3d434c, metalness: 0.46, roughness: 0.44 });
+    MAT.tank     = new THREE.MeshStandardMaterial({ color: 0x484d54, metalness: 0.70, roughness: 0.36 });
+    // The deck plate is a machined surface, not a painted one - the same
+    // grey as the lathe's saddle and cross-slide.
+    MAT.deck     = new THREE.MeshStandardMaterial({ color: 0x8d9299, metalness: 0.62, roughness: 0.34 });
     MAT.hose     = new THREE.MeshStandardMaterial({ color: 0x1a1c20, metalness: 0.2, roughness: 0.7 });
     // Three boards off the same stack, no two of them alike. Handing
     // them out in turn is what stops a crate reading as one moulding.
@@ -590,13 +616,15 @@ function init3D() {
                                                     emissive: BEACON_RED, emissiveIntensity: 0.1,
                                                     transparent: true, opacity: 0.92 });
 
-    MAT.body.envMapIntensity = 0.85;
-    MAT.bodyDark.envMapIntensity = 0.75;
+    // Enamel over cast iron reflects very little of the room, which is
+    // most of what separates it from the machined faces beside it.
+    MAT.body.envMapIntensity = 0.24;
+    MAT.bodyDark.envMapIntensity = 0.24;
     MAT.steel.envMapIntensity = 0.55;
     MAT.chrome.envMapIntensity = 2.4;
-    MAT.deck.envMapIntensity = 1.2;
+    MAT.deck.envMapIntensity = 0.8;
     MAT.motor.envMapIntensity = 0.8;
-    MAT.tank.envMapIntensity = 1.0;
+    MAT.tank.envMapIntensity = 0.9;
     MAT.rubber.envMapIntensity = 0.2;
     MAT.tyre.envMapIntensity = 0.5;
     MAT.wood.forEach(m => { m.envMapIntensity = 0.3; });
@@ -655,6 +683,16 @@ function buildBase() {
         track.position.set(60, PIVOT_Y - 10, s2 * (BASE_Z - 75));
         g.add(track);
     });
+
+    // The maker's plate, on the front end of the base and nowhere else -
+    // the same end the beacon stands on, which is the end you walk up
+    // to. High enough on it to clear the rubbing strip that wraps the
+    // corners below.
+    const badge = new THREE.Mesh(new THREE.PlaneGeometry(320, 87),
+        new THREE.MeshStandardMaterial({ map: badgeTexture(), roughness: 0.4 }));
+    badge.position.set(BASE_X + 1, yMid + 12, 0);
+    badge.rotation.y = Math.PI / 2;
+    g.add(badge);
 
     [-1, 1].forEach(s2 => {
         const end = new THREE.Mesh(roundedBox(40, BASE_H, BASE_Z * 2, 10), MAT.body);
@@ -1353,7 +1391,12 @@ function update3D() {
         m.emissive.setHex(safe ? BEACON_GREEN : BEACON_RED);
         m.emissiveIntensity = safe ? 1.5 : (flash ? 2.4 : 0.08);
         beaconLight.color.setHex(safe ? BEACON_GREEN : BEACON_RED);
-        beaconLight.intensity = safe ? 0.9 : (flash ? 2.2 : 0);
+        // The red flash can afford to throw itself over the machine
+        // because it is gone again half a second later. The green is on
+        // the whole time the lift is parked, and a machine permanently
+        // washed green reads as a fault rather than as calm - so the
+        // lens is bright and what it spills is barely there.
+        beaconLight.intensity = safe ? 0.22 : (flash ? 2.2 : 0);
     }
 
     controls.update();
