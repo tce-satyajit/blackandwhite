@@ -414,7 +414,7 @@ function init3D() {
     scene.background = new THREE.Color(0xf1f5f9);
 
     camera = new THREE.PerspectiveCamera(42, 1, 20, 9000);
-    camera.position.set(700, 700, 900);
+    camera.position.set(921, 634, 1337);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -429,7 +429,7 @@ function init3D() {
     controls.maxDistance = 4000;
     controls.maxPolarAngle = Math.PI / 2 + 0.02;
     controls.autoRotateSpeed = 0.9;
-    controls.target.set(80, 260, 0);
+    controls.target.set(80, -20, 0);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.26));
     const key = new THREE.DirectionalLight(0xffffff, 0.72);
@@ -2085,7 +2085,9 @@ function update3D() {
 }
 
 const VIEWS = {
-    bench: { pos: [780, 760, 980],  tgt: [60, 250, 0] },
+    // Far enough back, and aimed low enough, that the whole machine
+    // sits above the control panel with the panel open.
+    bench: { pos: [921, 634, 1337], tgt: [80, -20, 0] },
     // From the far side of the machine. The near side puts the carriage
     // and toolpost squarely between you and the cut — from here the bar
     // is 90% in view and the cutting point is clear.
