@@ -238,3 +238,45 @@ body.controls-off #btn-show {
     background-color: transparent !important;
     border-color: transparent !important;
 }
+
+/* ---- Portrait ------------------------------------------------
+   On a narrow screen the sliders drop to one column and the chips wrap,
+   so the panel grows until it covers the whole view - 100% of it on the
+   projects with the most controls, which hides the very thing the
+   controls are for.
+
+   So on narrow screens the panel is capped and scrolls instead. The
+   model keeps the top half of the window and the controls become a
+   short scrolling sheet, which is the same bargain a phone makes
+   everywhere else.
+
+   The hide button has to come out of the panel to do it. It is
+   positioned against the panel, and a panel that scrolls would carry it
+   off the bottom of the screen with the rest of the content - so on
+   narrow screens it is pinned to the viewport instead, landing in the
+   same corner the show button uses. */
+@media (max-width: 700px) {
+    #panel {
+        max-height: 46vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        padding-right: 10px;
+    }
+    /* The rows already say flex-wrap: wrap, but shrink-0 stops them
+       shrinking to the panel's width, so they wrap against their own
+       content width instead and hang off the side. Letting them shrink
+       is what makes the wrapping actually happen; min-width: 0 is the
+       other half of it, since a flex item will not shrink below its
+       content unless told it may. */
+    #panel .shrink-0 {
+        flex-shrink: 1 !important;
+        min-width: 0 !important;
+    }
+    #btn-hide,
+    #btn-show {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+    }
+}
