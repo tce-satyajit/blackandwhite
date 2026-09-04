@@ -88,7 +88,7 @@ const state = {
     // as the clock does. So it starts off and waits to be asked for.
     sound: false, mesh: false, turntable: false,
     lastBeat: null,                    // which beat the tick last fired on
-    viewMode: 'blueprint',
+    viewMode: 'light',
     vphase: 0,                         // the pendulum as drawn, which may be slowed
     strike: null,                      // { left, phase, hour } while striking
     windAnim: 0                        // >0 while the key is being turned
@@ -1294,12 +1294,18 @@ function buildStrike() {
     clockGrp.add(std);
 
     hammerGrp = new THREE.Group();
+    // The arm has to lean out far enough to clear the flare. The pivot
+    // sits directly under the bell's axis, so an arm that only leans a
+    // little comes up inside the mouth and buries the head in the wall.
+    // It is aimed at the widest point of the bell instead - the sound
+    // bow, which is where a bell is struck - and the head sits against
+    // the outside of it, 80 out and 225 up from the pivot.
     const arm = new THREE.Mesh(new THREE.ExtrudeGeometry(
-        ribbonShape([{ x: 0, y: 0 }, { x: 24, y: 127 }, { x: 47, y: 254 }], [6.5, 5.2, 4.4]),
+        ribbonShape([{ x: 0, y: 0 }, { x: 40, y: 112 }, { x: 80, y: 225 }], [6.5, 5.2, 4.4]),
         { depth: 5, bevelEnabled: false }), MAT.steelDark);
     hammerGrp.add(arm);
     const head = new THREE.Mesh(new THREE.SphereGeometry(11, 18, 14), MAT.steelBright);
-    head.position.set(47, 254, 2.5);
+    head.position.set(80, 225, 2.5);
     head.castShadow = true;
     hammerGrp.add(head);
     const tail = new THREE.Mesh(new THREE.ExtrudeGeometry(
