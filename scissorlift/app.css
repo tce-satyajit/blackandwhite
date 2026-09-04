@@ -92,3 +92,47 @@ input[type=range]:focus-visible::-webkit-slider-thumb {
     border: 1px solid #e2e8f0;
     box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
 }
+
+/* ---- The controls float over the view ------------------------
+   The view is always the full size of the window under the header. The
+   control panel is not a slice taken out of it - it sits on top, so
+   hiding it uncovers the machine rather than resizing the canvas.
+
+   That is worth doing for more than tidiness: the renderer only has to
+   be told about a size change that actually happens, and now none does.
+   Toggling the panel costs nothing but a transform.
+
+   The header stays either way. It is not chrome in the way the panel
+   is - it is the read-out, and height, pressure and tip margin are
+   exactly what you want in front of you while watching the machine
+   work. */
+#panel {
+    position: absolute;
+    left: 10px; right: 10px; bottom: 10px;
+    z-index: 25;
+    background: rgba(248, 250, 252, 0.44);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border-radius: 15px;
+    /* A card floating clear of the frame needs its own edge, or it reads
+       as a smudge on the glass rather than a panel sitting on top of it. */
+    border: 1px solid rgba(226, 232, 240, 0.7);
+    box-shadow: 0 8px 24px -6px rgba(15, 23, 42, 0.25);
+    transition: transform .22s ease, opacity .18s ease;
+}
+body.controls-off #panel {
+    /* Slides down and clear of the rounded card below it, rather than
+       the flush-bottom slide that suited the old edge-to-edge bar. */
+    transform: translateY(calc(100% + 14px));
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* The message sits above the panel rather than under it - it is the
+   thing that explains why a control is dead, so the control panel
+   covering it up would be exactly the wrong way round. --panel-h is
+   measured in app.js, because the panel wraps to different heights. */
+#msg {
+    bottom: calc(var(--panel-h, 0px) + 0.75rem);
+    transition: bottom .22s ease;
+}

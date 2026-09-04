@@ -2157,7 +2157,7 @@ function resizeView() {
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
 }
-window.addEventListener('resize', resizeView);
+window.addEventListener('resize', () => { resizeView(); measurePanel(); });
 
 // =============================================================
 //  Readings
@@ -2513,13 +2513,46 @@ $('chk-view-mode').addEventListener('change', e => {
     paintViewMode();
 });
 
+// Show and hide the control panel. It floats over the view, so this
+// uncovers the machine rather than resizing anything - the canvas is
+// always the full size of the window under the header.
+//
+// The one rule is that the way back has to stay on screen: the button
+// sits over the view rather than in the panel it hides, or turning this
+// on would be a one-way door.
+function measurePanel() {
+    // The panel wraps to two or three rows depending on the window, so
+    // how much room the message has to clear is measured, not assumed.
+    // The card floats 10px clear of the frame's own edge, so what the
+    // message has to clear is that whole gap, not just the card's height.
+    const off = document.body.classList.contains('controls-off');
+    const h = off ? 0 : $('panel').getBoundingClientRect().height + 10;
+    document.body.style.setProperty('--panel-h', Math.round(h) + 'px');
+}
+function paintControls() {
+    const off = document.body.classList.contains('controls-off');
+    const b = $('btn-wide');
+    b.innerHTML = off ? '<i class="fa-solid fa-sliders"></i>'
+                      : '<i class="fa-solid fa-chevron-down"></i>';
+    b.title = off ? 'Show the controls' : 'Hide the controls (Esc)';
+    b.setAttribute('aria-label', b.title);
+    measurePanel();
+}
+function setControls(off) {
+    document.body.classList.toggle('controls-off', off);
+    paintControls();
+}
+$('btn-wide').addEventListener('click',
+    () => setControls(!document.body.classList.contains('controls-off')));
+
 const infoModal = $('info-modal');
 $('btn-info').addEventListener('click', () => infoModal.classList.remove('hidden'));
 $('info-close').addEventListener('click', () => infoModal.classList.add('hidden'));
 $('info-backdrop').addEventListener('click', () => infoModal.classList.add('hidden'));
 document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !infoModal.classList.contains('hidden'))
-        infoModal.classList.add('hidden');
+    if (e.key !== 'Escape') return;
+    if (!infoModal.classList.contains('hidden')) infoModal.classList.add('hidden');
+    else if (!document.body.classList.contains('controls-off')) setControls(true);
 });
 
 function hideLoader() {
@@ -2541,6 +2574,7 @@ window.onload = function () {
     initAudio();
     reset();
     paintDrive();
+    paintControls();
     paintViewMode();
     applyMesh();
     resizeView();
