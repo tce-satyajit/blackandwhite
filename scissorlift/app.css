@@ -136,3 +136,33 @@ body.controls-off #panel {
     bottom: calc(var(--panel-h, 0px) + 0.75rem);
     transition: bottom .22s ease;
 }
+
+/* ---- The controls, flattened ---------------------------------
+   The panel is already a card floating over the view. Giving every
+   control inside it another card stacks three shades of white on top of
+   the machine and reads as a form rather than a control surface - so
+   inside the panel nothing has a fill, a border or a shadow of its own,
+   and everything is set in black.
+
+   Two things deliberately keep their fill, because losing it would lose
+   information rather than decoration:
+
+     .bg-slate-900  the pressed state of Raise, Park and the selected
+                    view - the only thing saying which one is active;
+     .bg-slate-100  the off state of the Forces/Mesh/Spin chips, which
+                    is how an unticked chip reads as unticked.
+
+   And .text-white is left alone, since it is what sits on those fills. */
+#panel .bg-white { background-color: transparent !important; }
+#panel .border,
+#panel .border-slate-200 { border-color: transparent !important; }
+#panel .shadow-sm,
+#panel .shadow { box-shadow: none !important; }
+
+#panel .text-slate-400,
+#panel .text-slate-500,
+#panel .text-slate-600,
+#panel .text-slate-700,
+#panel .text-slate-900,
+#panel label,
+#panel .mono { color: #000 !important; }
