@@ -138,8 +138,14 @@ input[type=range]:focus-visible::-webkit-slider-thumb {
    The panel is already a card floating over the view. Giving every
    control inside it another card stacks three shades of white on top of
    the model and reads as a form rather than a control surface - so
-   inside the panel nothing has a fill, a border or a shadow of its own,
-   and everything is set in black.
+   inside the panel nothing has a fill or a shadow of its own, and
+   everything is set in black.
+
+   The border is the one thing that has to stay. With no edge the groups
+   run into each other and into the model behind them, and the panel
+   stops reading as a set of controls at all - so it is kept, dialled
+   back to a soft black that draws the boundary without the group
+   becoming a card again.
 
    Two things deliberately keep their fill, because losing it would lose
    information rather than decoration:
@@ -152,7 +158,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb {
    And .text-white is left alone, since it is what sits on those fills. */
 #panel .bg-white { background-color: transparent !important; }
 #panel .border,
-#panel .border-slate-200 { border-color: transparent !important; }
+#panel .border-slate-200 { border-color: #00000059 !important; }
 #panel .shadow-sm,
 #panel .shadow { box-shadow: none !important; }
 
