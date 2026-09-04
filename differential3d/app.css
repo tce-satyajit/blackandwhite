@@ -134,6 +134,10 @@ input[type=range]:focus-visible::-webkit-slider-thumb {
    left, the way it did before. No overlay, and no toggle to hide it.
    The flattened styling below still applies. */
 
+/* The panel's own ground. Set here rather than left to the utility
+   class on the element, so every project carries the same value. */
+#panel { background: #f8fafc9e; }
+
 /* ---- The controls, flattened ---------------------------------
    The panel is already a card floating over the view. Giving every
    control inside it another card stacks three shades of white on top of

@@ -116,7 +116,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb {
     position: absolute;
     left: 10px; right: 10px; bottom: 10px;
     z-index: 25;
-    background: rgba(248, 250, 252, 0.44);
+    background: #f8fafc9e;
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     border-radius: 15px;
