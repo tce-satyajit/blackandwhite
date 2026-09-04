@@ -181,3 +181,35 @@ body.controls-off #btn-show {
     opacity: 1;
     pointer-events: auto;
 }
+
+/* ---- The read-out --------------------------------------------
+   Numbers that change every frame, on one row. Two separate things made
+   the row shuffle sideways as they did.
+
+   First, in a proportional face a 1 is narrower than a 0, so the width
+   changes even when the digit count does not. Tabular figures settle
+   that: every digit on the same advance.
+
+   Second, the digit count changes too, and no font feature helps with
+   that. So each field also gets a floor on its width, sized to the
+   widest value it can actually reach, and the number is set against the
+   right so it stays beside its unit and the slack falls after the label.
+
+   Addressed by id rather than a shared class, because updateStats
+   reassigns className on some of these to recolour them on overload -
+   which would wipe a class added here.
+
+   A floor, not a fixed width: an unexpected value still gets its room,
+   it just moves the row when it does. */
+#stat-beat, #stat-rate, #stat-drift, #stat-amp {
+    display: inline-block;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+#stat-beat  { min-width: 6ch; }   /* toFixed(4), e.g. "1.0000" */
+#stat-rate  { min-width: 6ch; }   /* signed, e.g. "+128.4" - a badly set
+                                     pendulum runs a long way out */
+#stat-drift { min-width: 7ch; }   /* signed, and drift keeps accumulating:
+                                     "-1204.5" is reachable in a long run */
+#stat-amp   { min-width: 5ch; }   /* toFixed(2), and the arc can pass 10 deg */

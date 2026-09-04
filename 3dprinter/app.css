@@ -313,3 +313,32 @@ body.controls-off #btn-show {
     opacity: 1;
     pointer-events: auto;
 }
+
+/* ---- The read-out --------------------------------------------
+   Numbers that change every frame, on one row. Two separate things made
+   the row shuffle sideways as they did.
+
+   First, in a proportional face a 1 is narrower than a 0, so the width
+   changes even when the digit count does not. Tabular figures settle
+   that: every digit on the same advance.
+
+   Second, the digit count changes too, and no font feature helps with
+   that. So each field also gets a floor on its width, sized to the
+   widest value it can actually reach, and the number is set against the
+   right so it stays beside its unit and the slack falls after the label.
+
+   Addressed by id rather than a shared class, because updateStats
+   reassigns className on some of these to recolour them on overload -
+   which would wipe a class added here.
+
+   A floor, not a fixed width: an unexpected value still gets its room,
+   it just moves the row when it does. */
+#stat-layer, #stat-pct, #stat-eta {
+    display: inline-block;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+#stat-layer { min-width: 9ch; }   /* "230/230", and a fine layer height can push both to four digits */
+#stat-pct   { min-width: 3ch; }   /* 0 to 100 */
+#stat-eta   { min-width: 3ch; }   /* minutes remaining */

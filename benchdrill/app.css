@@ -183,3 +183,33 @@ body.controls-off #btn-show {
     opacity: 1;
     pointer-events: auto;
 }
+
+/* ---- The read-out --------------------------------------------
+   Numbers that change every frame, on one row. Two separate things made
+   the row shuffle sideways as they did.
+
+   First, in a proportional face a 1 is narrower than a 0, so the width
+   changes even when the digit count does not. Tabular figures settle
+   that: every digit on the same advance.
+
+   Second, the digit count changes too, and no font feature helps with
+   that. So each field also gets a floor on its width, sized to the
+   widest value it can actually reach, and the number is set against the
+   right so it stays beside its unit and the slack falls after the label.
+
+   Addressed by id rather than a shared class, because updateStats
+   reassigns className on some of these to recolour them on overload -
+   which would wipe a class added here.
+
+   A floor, not a fixed width: an unexpected value still gets its room,
+   it just moves the row when it does. */
+#stat-rpm, #stat-vc, #stat-torque, #stat-power {
+    display: inline-block;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+#stat-rpm    { min-width: 4ch; }   /* up to four digits */
+#stat-vc     { min-width: 5ch; }   /* toFixed(1), e.g. "123.5" */
+#stat-torque { min-width: 5ch; }   /* toFixed(2), e.g. "12.34" */
+#stat-power  { min-width: 4ch; }   /* watts, up to four digits */
