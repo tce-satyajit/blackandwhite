@@ -166,3 +166,32 @@ body.controls-off #panel {
     background-color: transparent !important;
     border-top-color: transparent !important;
 }
+
+/* ---- The two halves of the toggle ----------------------------
+   One button cannot do this job. The one that hides the panel belongs
+   in the panel's own corner, which means it slides away with the panel
+   and cannot be the way back - so the one that brings it back has to
+   live outside the panel, and only appears once the panel has gone. */
+#btn-hide {
+    position: absolute;
+    bottom: 6px; right: 6px;
+    z-index: 30;
+}
+/* Room in the panel's bottom-right corner so the controls do not run
+   under the button. Both buttons are the same size and sit in the same
+   place on screen, so toggling swaps one for the other without anything
+   appearing to move. */
+#panel { padding-right: 44px; }
+
+#btn-show {
+    position: absolute;
+    right: 14px; bottom: 14px;
+    z-index: 30;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+}
+body.controls-off #btn-show {
+    opacity: 1;
+    pointer-events: auto;
+}
