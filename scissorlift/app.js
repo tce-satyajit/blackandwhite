@@ -2513,13 +2513,14 @@ $('chk-view-mode').addEventListener('change', e => {
     paintViewMode();
 });
 
-// Show and hide the control panel. It floats over the view, so this
-// uncovers the machine rather than resizing anything - the canvas is
-// always the full size of the window under the header.
+// Show and hide the control panel.
 //
-// The one rule is that the way back has to stay on screen: the button
-// sits over the view rather than in the panel it hides, or turning this
-// on would be a one-way door.
+// Two buttons, not one that moves. The hide button sits in the panel's
+// own bottom-right corner, so it travels with the panel and is gone the
+// moment the panel is - which is exactly why it cannot also be the way
+// back. The show button lives outside the panel and lands in the same
+// spot on screen, so toggling swaps one for the other without anything
+// appearing to move.
 function measurePanel() {
     // The panel wraps to two or three rows depending on the window, so
     // how much room the message has to clear is measured, not assumed.
@@ -2529,21 +2530,15 @@ function measurePanel() {
     const h = off ? 0 : $('panel').getBoundingClientRect().height + 10;
     document.body.style.setProperty('--panel-h', Math.round(h) + 'px');
 }
-function paintControls() {
-    const off = document.body.classList.contains('controls-off');
-    const b = $('btn-wide');
-    b.innerHTML = off ? '<i class="fa-solid fa-sliders"></i>'
-                      : '<i class="fa-solid fa-chevron-down"></i>';
-    b.title = off ? 'Show the controls' : 'Hide the controls (Esc)';
-    b.setAttribute('aria-label', b.title);
-    measurePanel();
-}
 function setControls(off) {
     document.body.classList.toggle('controls-off', off);
-    paintControls();
+    measurePanel();
 }
-$('btn-wide').addEventListener('click',
-    () => setControls(!document.body.classList.contains('controls-off')));
+// Kept so the load-time call still has something to call, and so the
+// message is measured once the panel has settled.
+function paintControls() { measurePanel(); }
+$('btn-hide').addEventListener('click', () => setControls(true));
+$('btn-show').addEventListener('click', () => setControls(false));
 
 const infoModal = $('info-modal');
 $('btn-info').addEventListener('click', () => infoModal.classList.remove('hidden'));
