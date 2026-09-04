@@ -44,7 +44,16 @@ const state = {
     warn: 0,                           // seconds of warning still to sound
     motion: 0,                         // 0..1, how much of full flow is actually moving
     lastDir: 0,                        // which way it was going, for the run-down
-    viewMode: 'blueprint'
+    viewMode: 'blueprint',
+    // Where the machine is standing and which way it is pointing. The
+    // pose is kept at the rear axle, not the centre, because that is the
+    // point a steered vehicle actually pivots about - the rear wheels do
+    // not slip sideways, so the rear axle only ever moves along the
+    // heading. The centre is worked out from it when it is time to draw.
+    drive: 0,                          // -1 reverse, 0 stopped, +1 forward
+    rx: 0, rz: 0, yaw: 0,              // rear axle, in world millimetres
+    vel: 0,                            // mm/s, eased - a machine has mass
+    spin: 0                            // how far the wheels have rolled
 };
 
 const $ = id => document.getElementById(id);
@@ -159,6 +168,24 @@ const TREAD_N = 22;                   // lugs round the tyre
 // pivot line the rail it runs on has to sit.
 const ROLL_R = 38;
 
+// ---- driving it ------------------------------------------------
+// Front wheels steer, rear wheels follow: the machine turns about a
+// point out on the line of its rear axle, and how far out that point is
+// depends on nothing but the steering angle and the wheelbase. That is
+// the whole of it - tan(steer) / wheelbase is the curvature, and a
+// vehicle with no slip cannot do anything else.
+const WHEELBASE = WHEEL_X * 2;
+// The ground. Fourteen metres of it, and it follows the machine - see
+// placeMachine for why that is not the same as the machine standing
+// still.
+const GROUND_SPAN = 14000, GROUND_DIV = 70;
+const DRIVE_SPEED = 900;              // mm/s, about walking pace
+const DRIVE_RAMP = 0.9;               // seconds to reach it, and to lose it
+// Raised, it creeps. Every machine of this kind does: the higher the
+// deck, the further a wheel dropping into a pothole swings the top, and
+// travelling at height is how these get turned over.
+const CREEP = 0.25;
+
 // ---- what is actually on the deck -------------------------------
 // Not a cube. A timber crate banded down to a block pallet - and the
 // pallet is a piece of engineering in its own right: three bottom
@@ -190,11 +217,13 @@ const loadH = () => PAL_H + crateH();        // pallet foot to crate lid
 const loadShown = () => state.crate && P.load > 0;
 
 let scene, camera, renderer, controls;
-let floor3, grid3, liftGrp;
+let floor3, grid3, liftGrp, keyLight = null;
 let armsL = [], armsU = [], deckGrp, crateGrp;
 // The front pair of swing arms. Only these turn; the back pair are
 // fixed, which is what makes the machine track straight when pushed.
 const steerArms = [];
+// And every wheel, front and back, since all four roll.
+const spinWheels = [];
 // The parts of the load that have to move or come and go as the mass on
 // the slider changes. Everything is built once; nothing is rebuilt.
 const loadParts = { posts: [], rows: [], bands: [], lid: null, goods: null };
@@ -757,7 +786,7 @@ function drawMarks() {
     glyphBrolly(g, 1052, 62, 1.25);
 
     g.font = 'bold 46px Inter, Helvetica, Arial, sans-serif';
-    g.fillText('SATYAJIT', 295, 70);
+    g.fillText('IFP & OPS', 295, 70);
     g.font = '26px Inter, Helvetica, Arial, sans-serif';
     g.fillText('LOT 41-27  ·  1 OF 1', 295, 110);
 
@@ -817,7 +846,8 @@ function init3D() {
     controls.target.set(0, 1150, 0);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.34));
-    const key = new THREE.DirectionalLight(0xfff6e8, 0.8);
+    keyLight = new THREE.DirectionalLight(0xfff6e8, 0.8);
+    const key = keyLight;
     key.position.set(1900, 3000, 2100);
     key.castShadow = true;
     key.shadow.mapSize.width = key.shadow.mapSize.height = 2048;
@@ -830,6 +860,7 @@ function init3D() {
     key.shadow.bias = -0.00018;
     key.shadow.normalBias = 2;
     scene.add(key);
+    scene.add(key.target);
     const fill = new THREE.DirectionalLight(0xbfd4f0, 0.28);
     fill.position.set(-2000, 1400, -1200); scene.add(fill);
     const rim = new THREE.DirectionalLight(0xffffff, 0.3);
@@ -854,12 +885,12 @@ function init3D() {
     scene.environment = pm.fromEquirectangular(et).texture;
     et.dispose(); pm.dispose();
 
-    floor3 = new THREE.Mesh(new THREE.PlaneGeometry(14000, 14000),
+    floor3 = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SPAN, GROUND_SPAN),
         new THREE.MeshStandardMaterial({ color: 0x131c2e, roughness: 0.92 }));
     floor3.rotation.x = -Math.PI / 2;
     floor3.receiveShadow = true;
     scene.add(floor3);
-    grid3 = new THREE.GridHelper(14000, 70, 0x334155, 0x1e293b);
+    grid3 = new THREE.GridHelper(GROUND_SPAN, GROUND_DIV, 0x334155, 0x1e293b);
     scene.add(grid3);
 
     // Yellow enamel on the frame, black on the linkage, bare steel where
@@ -1177,7 +1208,14 @@ function buildWheels() {
         // carrier behind it all go round together.
         const arm = new THREE.Group();
         arm.position.set(sx * WHEEL_X, WHEEL_R, sz * WHEEL_Z);
-        makeWheel(arm);
+
+        // Inside the steering, the rolling. Two nested groups rather than
+        // one, because a wheel does both at once and about different
+        // axes: it steers about the vertical and rolls about its axle.
+        const spin = new THREE.Group();
+        makeWheel(spin);
+        spinWheels.push(spin);
+        arm.add(spin);
 
         // The carrier the hub runs on, tucked inboard behind the wheel
         // where it is on a real machine - there is no bracket on the
@@ -1324,7 +1362,11 @@ const BEACON_FADE = 0.42;            // seconds to hand over between them
 let beaconRed = 0, beaconGrn = 0, beaconPhase = 0;
 
 function advanceBeacon(real) {
-    const live = state.cmd !== 0 || state.warn > 0;
+    // Travelling counts. A machine crossing a yard is exactly what a
+    // beacon is for, and it is the state a person walking past is most
+    // likely to be caught out by.
+    const live = state.cmd !== 0 || state.warn > 0 ||
+                 state.drive !== 0 || Math.abs(state.vel) > 1;
     const safe = !live && (atStop(1) || atStop(-1));
     const k = Math.min(1, real / BEACON_FADE);
     beaconRed += ((live ? 1 : 0) - beaconRed) * k;
@@ -1728,6 +1770,73 @@ function setArms(list, yBase, midX, h, th) {
     });
 }
 
+// Where the machine stands. The pose is kept at the rear axle, so the
+// centre - which is what liftGrp is built about - is half a wheelbase
+// ahead of it along the heading.
+//
+// Three things then have to be told it has moved, and forgetting any
+// one of them is the difference between a machine driving across a
+// floor and a floor sliding under a machine:
+//
+//   the camera, or it drives out of frame;
+//   the shadow camera, which only covers a few metres and would leave
+//     the machine's shadow behind at the origin;
+//   and nothing else, because the ground shade, the load and every part
+//     of the linkage are children of liftGrp and come along for free.
+let lastCx = null, lastCz = null;
+
+function machineCentre() {
+    return {
+        x: state.rx + (WHEELBASE / 2) * Math.cos(state.yaw),
+        z: state.rz - (WHEELBASE / 2) * Math.sin(state.yaw)
+    };
+}
+
+function placeMachine() {
+    const c = machineCentre();
+    liftGrp.position.set(c.x, 0, c.z);
+    liftGrp.rotation.y = state.yaw;
+
+    if (lastCx !== null) {
+        // Move the camera by exactly what the machine moved, so the
+        // orbit the user set up is preserved and the machine simply
+        // stays in it. Anything in flight from the view buttons gets the
+        // same shift, or it would lerp towards where the machine was.
+        const dx = c.x - lastCx, dz = c.z - lastCz;
+        if (dx || dz) {
+            camera.position.x += dx; camera.position.z += dz;
+            controls.target.x += dx; controls.target.z += dz;
+            if (camT < 1 && camFrom && camTo) {
+                camFrom.pos.x += dx; camFrom.pos.z += dz;
+                camFrom.tgt.x += dx; camFrom.tgt.z += dz;
+                camTo.pos.x += dx;   camTo.pos.z += dz;
+                camTo.tgt.x += dx;   camTo.tgt.z += dz;
+            }
+        }
+    }
+    lastCx = c.x; lastCz = c.z;
+
+    if (keyLight) {
+        keyLight.position.set(c.x + 1900, 3000, c.z + 2100);
+        keyLight.target.position.set(c.x, 0, c.z);
+    }
+
+    // And the floor comes too, so there is no edge to drive off and no
+    // need to fence the machine in with a distance limit it would stop
+    // at for no visible reason.
+    //
+    // It is snapped to whole grid squares rather than followed exactly.
+    // That is the whole trick: the sheet is always under the machine,
+    // but the lines on it only ever jump by one full square, so they
+    // read as painted on the ground and staying there. Follow it exactly
+    // and the grid travels with the machine - which looks precisely like
+    // a machine that is not moving at all.
+    const cell = GROUND_SPAN / GROUND_DIV;
+    const gx = Math.round(c.x / cell) * cell, gz = Math.round(c.z / cell) * cell;
+    grid3.position.x = gx; grid3.position.z = gz;
+    floor3.position.x = gx; floor3.position.z = gz;
+}
+
 // The load is built once at its largest and then told how much of
 // itself to be. Nothing here allocates, so the mass slider can be
 // dragged the whole way across without the frame rate noticing.
@@ -1787,6 +1896,8 @@ function update3D() {
     // that the inner wheel should turn further than the outer one.
     const lock = P.steer * Math.PI / 180;
     steerArms.forEach(a => { a.rotation.y = lock; });
+    spinWheels.forEach(w => { w.rotation.z = state.spin; });
+    placeMachine();
 
     // the rams, from the cosine-rule triangle
     const bx = FIX_X + RAM_P, by = y0;
@@ -1899,11 +2010,20 @@ const VIEWS = {
     deck:    { pos: [1600, 2500, 2000], tgt: [0, 1700, 0] }
 };
 let camFrom = null, camTo = null, camT = 1;
+// Every view above is written in the machine's own coordinates - "the
+// ram" means this side of this machine, not a spot on the floor. Once
+// the machine can drive away and turn round, those have to be carried
+// onto it: rotated by its heading, then moved to where it is standing.
+function onMachine(a) {
+    const c = machineCentre(), s = Math.sin(state.yaw), k = Math.cos(state.yaw);
+    return new THREE.Vector3(a[0] * k + a[2] * s + c.x, a[1], -a[0] * s + a[2] * k + c.z);
+}
+
 function setView(name) {
     const v = VIEWS[name];
     if (!v || !gl) return;
     camFrom = { pos: camera.position.clone(), tgt: controls.target.clone() };
-    camTo = { pos: new THREE.Vector3().fromArray(v.pos), tgt: new THREE.Vector3().fromArray(v.tgt) };
+    camTo = { pos: onMachine(v.pos), tgt: onMachine(v.tgt) };
     camT = 0;
 }
 function advanceCamera(real) {
@@ -1994,7 +2114,7 @@ function warnAndGo(dir) {
     state.lastDir = dir;
     state.warn = WARN_TIME;
     loopOff(aRaise); loopOff(aLower);
-    oneShot(aBeep, 0.25);
+    oneShot(aBeep, 0.12);
 }
 
 function soundUpdate() {
@@ -2029,7 +2149,37 @@ function endEase(dir) {
     return EASE_FLOOR + (1 - EASE_FLOOR) * ease(room / EASE_RAM);
 }
 
+// Driving it. The bicycle model, which is not an approximation of a
+// four-wheeled vehicle so much as a statement of what one is: if the
+// wheels do not slip sideways, the whole machine turns about one point,
+// that point is out on the line of the rear axle, and where along that
+// line it sits is fixed by the steering angle and the wheelbase alone.
+//
+// Everything else falls out. The yaw rate is v tan(steer) / wheelbase.
+// Straight ahead, tan is zero and it does not turn at all. At full lock
+// it carves the tightest circle the geometry allows - which for this
+// machine, 840 mm of wheelbase at 32 degrees, is a radius of about
+// 1.3 m, or rather less than its own length. That is why these things
+// are the shape they are.
+function stepTravel(dt) {
+    const want = state.drive * DRIVE_SPEED * (atStop(-1) ? 1 : CREEP);
+    state.vel += (want - state.vel) * Math.min(1, dt / DRIVE_RAMP);
+    if (Math.abs(state.vel) < 0.5) { state.vel = 0; return; }
+
+    const d = P.steer * Math.PI / 180;
+    state.yaw += state.vel * Math.tan(d) / WHEELBASE * dt;
+    // The rear axle only ever moves along the heading. That is the whole
+    // assumption, and it is the one that makes the rest of it true.
+    state.rx += state.vel * Math.cos(state.yaw) * dt;
+    state.rz -= state.vel * Math.sin(state.yaw) * dt;
+    // And the wheels roll the distance covered, not some rate picked to
+    // look right: one revolution per circumference, or they skate.
+    state.spin -= state.vel * dt / WHEEL_R;
+}
+
 function step(dt) {
+    stepTravel(dt);
+
     // The warning runs first and the machine waits for it. This is the
     // order a real one does it in, and it is not decoration: people
     // stand next to these things.
@@ -2079,6 +2229,11 @@ function reset() {
     Object.assign(P, DEFAULTS);
     state.th = TH_MIN; state.cmd = 0; state.warn = 0;
     state.motion = 0; state.lastDir = 0;
+    // Back to the middle of the floor, facing the way it started. The
+    // camera is dragged along by the same jump, since placeMachine moves
+    // it by whatever the machine moved.
+    state.drive = 0; state.vel = 0; state.spin = 0;
+    state.rx = 0; state.rz = 0; state.yaw = 0;
     soundStop();
     ['load', 'offset', 'bore', 'flow', 'relief', 'steer'].forEach(k => {
         $('s-' + k).value = P[k];
@@ -2105,7 +2260,20 @@ $('btn-down').addEventListener('click', () => { warnAndGo(-1); paintRun(); });
 $('btn-stop').addEventListener('click', () => {
     state.cmd = 0; state.warn = 0; soundStop(); paintRun();
 });
-$('btn-reset').addEventListener('click', () => reset());
+$('btn-reset').addEventListener('click', () => { reset(); paintDrive(); });
+
+function paintDrive() {
+    [['btn-fwd', 1], ['btn-rev', -1], ['btn-park', 0]].forEach(([id, v]) => {
+        const b = $(id), on = state.drive === v;
+        b.classList.toggle('bg-slate-900', on);
+        b.classList.toggle('text-white', on);
+        b.classList.toggle('bg-white', !on);
+        b.classList.toggle('text-slate-900', !on);
+    });
+}
+$('btn-fwd').addEventListener('click', () => { state.drive = 1; paintDrive(); });
+$('btn-rev').addEventListener('click', () => { state.drive = -1; paintDrive(); });
+$('btn-park').addEventListener('click', () => { state.drive = 0; paintDrive(); });
 
 function paintViews(name) {
     document.querySelectorAll('.vseg').forEach(b => b.classList.toggle('on', b.dataset.view === name));
@@ -2174,6 +2342,7 @@ window.onload = function () {
     }
     initAudio();
     reset();
+    paintDrive();
     paintViewMode();
     applyMesh();
     resizeView();
