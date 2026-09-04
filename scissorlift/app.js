@@ -2265,9 +2265,10 @@ function paintLiftButtons() {
 // moves until it has. On the way up that is the pump; on the way down
 // there is no pump at all - the load does the work and the valve only
 // meters out what it gives back - so the two are not the same noise.
-let aBeep = null, aRaise = null, aLower = null;
+let aBeep = null, aRaise = null, aLower = null, aTravel = null;
 function initAudio() {
     aBeep = $('a-beep'); aRaise = $('a-raise'); aLower = $('a-lower');
+    aTravel = $('a-travel');
 }
 function loopOn(el, vol, rate) {
     if (!el) return;
@@ -2312,9 +2313,17 @@ function soundUpdate() {
     } else loopOff(aRaise);
     if (m > 0.02 && dir < 0) loopOn(aLower, 0.34 * m, rate);
     else loopOff(aLower);
+
+    // The travel alarm. It follows the actual speed rather than the
+    // button, so it starts as the machine pulls away and carries on
+    // through the run-down until it has really stopped - which is the
+    // whole point of an alarm that says "this is moving".
+    const v = Math.abs(state.vel) / DRIVE_SPEED;
+    if (state.sound && v > 0.02) loopOn(aTravel, 0.14, 0.9 + 0.2 * v);
+    else loopOff(aTravel);
 }
 function soundStop() {
-    [aBeep, aRaise, aLower].forEach(loopOff);
+    [aBeep, aRaise, aLower, aTravel].forEach(loopOff);
 }
 
 // =============================================================

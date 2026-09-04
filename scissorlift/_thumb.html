@@ -31,6 +31,10 @@
     <audio id="a-beep" src="vendor/audio/lift-start-beep.mp3" preload="auto"></audio>
     <audio id="a-raise" src="vendor/audio/lift-raise.mp3" preload="auto" loop></audio>
     <audio id="a-lower" src="vendor/audio/lift-lower.mp3" preload="auto" loop></audio>
+    <!-- The travel alarm. Same beep as the warning, but looped, because
+         that is what a travel alarm is: the warning, repeating, for as
+         long as the machine is moving. -->
+    <audio id="a-travel" src="vendor/audio/lift-start-beep.mp3" preload="auto" loop></audio>
 
     <div id="loader">
         <div class="ring"></div>
@@ -368,14 +372,21 @@
 <script>
 window.addEventListener('load', function () {
   setTimeout(function () {
-    P.load = 2000; P.offset = 600;
-    document.getElementById('s-load').value = 2000;
-    document.getElementById('v-load').textContent = 2000;
-    document.getElementById('s-offset').value = 600;
-    document.getElementById('v-offset').textContent = 600;
-    state.th = 30 * Math.PI / 180; state.tip = 1; state.tipRate = 0;
-    camera.position.set(1750, 1300, 2150);
-    controls.target.set(150, 700, 0);
+    document.querySelector('header').style.display = 'none';
+    var stage = document.getElementById('stage');
+    var card = stage.parentNode;
+    card.children[1].style.display = 'none';
+    card.style.border = 'none'; card.style.borderRadius = '0'; card.style.boxShadow = 'none';
+    var m = document.querySelector('main');
+    m.style.padding = '0'; m.style.gap = '0';
+    renderer.setPixelRatio(2);
+    resizeView();
+    P.load = 900; P.offset = 0; P.steer = 9;
+    document.getElementById('s-load').value = 900;
+    state.th = TH_MAX;
+    beaconGrn = 1; beaconRed = 0;          // parked at the top: the lamp is green
+    camera.position.set(2620, 2080, 2840);
+    controls.target.set(0, 1180, 0);
     camT = 1;
   }, 500);
 });
