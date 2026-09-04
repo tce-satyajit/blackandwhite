@@ -535,7 +535,12 @@ function init3D() {
     // load in a yard gets painted, for the same reason a hi-vis jacket is.
     MAT.body     = new THREE.MeshStandardMaterial({ color: 0xd9a516, metalness: 0.30, roughness: 0.42 });
     MAT.bodyDark = new THREE.MeshStandardMaterial({ color: 0xa87c0c, metalness: 0.32, roughness: 0.48 });
-    MAT.steel    = new THREE.MeshStandardMaterial({ color: 0x99a2ad, metalness: 0.90, roughness: 0.26 });
+    // Machined steel, not polished steel. A shaft through a pin joint
+    // comes off a lathe and then spends its life in grease and grit: it
+    // is a dull grey, and it has to be, because a near-mirror at this
+    // roughness reflects the environment map almost pixel for pixel and
+    // the joints come out blown white and blotchy rather than round.
+    MAT.steel    = new THREE.MeshStandardMaterial({ color: 0x939ba6, metalness: 0.72, roughness: 0.58 });
     MAT.chrome   = new THREE.MeshStandardMaterial({ color: 0xc9cfd7, metalness: 0.98, roughness: 0.055 });
     MAT.rubber   = new THREE.MeshStandardMaterial({ color: 0x22252a, metalness: 0.04, roughness: 0.88 });
     // Solid polyurethane, not rubber: pale, hard and slightly glossy.
@@ -587,7 +592,7 @@ function init3D() {
 
     MAT.body.envMapIntensity = 0.85;
     MAT.bodyDark.envMapIntensity = 0.75;
-    MAT.steel.envMapIntensity = 1.5;
+    MAT.steel.envMapIntensity = 0.55;
     MAT.chrome.envMapIntensity = 2.4;
     MAT.deck.envMapIntensity = 1.2;
     MAT.motor.envMapIntensity = 0.8;
@@ -785,18 +790,32 @@ function buildPowerPack() {
 // The scissor itself. Both arms of a stage are the same bar, pinned at
 // their middles - which is why their midpoints are always the same point,
 // and why the whole linkage has exactly one degree of freedom.
-function makeArm(mat) {
+//
+// The `thin` argument is not styling. Where one stage hands over to the
+// next, at E and at F, two arms meet on the same pin at the same z, and
+// their bars, their bosses and their bores end up in exactly the same
+// planes. Two surfaces sharing a plane give the depth buffer a coin to
+// toss, and it tosses it again every frame and every pixel: that is the
+// stipple on the bosses and the checkerboard where the bars cross. So
+// every B arm is drawn a few millimetres smaller than every A arm in
+// each direction. Wherever the two overlap, one is now strictly inside
+// the other, there is nothing left to toss for, and at three
+// millimetres on a ninety-six millimetre bar nobody can see which is
+// which.
+function makeArm(mat, thin) {
     const g = new THREE.Group();
-    const b = new THREE.Mesh(roundedBox(ARM_L, ARM_W, ARM_T, 18), mat);
+    const w = ARM_W - thin, t = ARM_T - thin;
+    const b = new THREE.Mesh(roundedBox(ARM_L, w, t, 18), mat);
     b.castShadow = b.receiveShadow = true;
     g.add(b);
     [-1, 1].forEach(s => {                 // a boss at each pin
-        const boss = new THREE.Mesh(new THREE.CylinderGeometry(ARM_W / 2, ARM_W / 2, ARM_T + 6, 22), mat);
+        const boss = new THREE.Mesh(new THREE.CylinderGeometry(w / 2, w / 2, t + 6 - thin, 22), mat);
         boss.rotation.x = Math.PI / 2;
         boss.position.x = s * ARM_L / 2;
         boss.castShadow = true;
         g.add(boss);
-        const hole = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, ARM_T + 14, 16), MAT.steel);
+        const hole = new THREE.Mesh(
+            new THREE.CylinderGeometry(15 - thin / 2, 15 - thin / 2, t + 14 - thin, 16), MAT.steel);
         hole.rotation.x = Math.PI / 2;
         hole.position.x = s * ARM_L / 2;
         g.add(hole);
@@ -851,8 +870,8 @@ function buildBeacon() {
 function buildScissor() {
     [[armsL, ARM_Z_OUT, ARM_Z_IN], [armsU, ARM_Z_IN, ARM_Z_OUT]].forEach(([store, zA, zB]) => {
         [-1, 1].forEach(s => {
-            [['A', zA, MAT.body], ['B', zB, MAT.bodyDark]].forEach(([kind, z, mat]) => {
-                const m = makeArm(mat);
+            [['A', zA, MAT.body, 0], ['B', zB, MAT.bodyDark, 3]].forEach(([kind, z, mat, thin]) => {
+                const m = makeArm(mat, thin);
                 m.position.z = s * z;
                 store.push({ m: m, kind: kind });
                 liftGrp.add(m);
@@ -888,7 +907,13 @@ function buildScissor() {
     'N M'.split(' ').forEach(k => {
         const g = new THREE.Group();
         [-1, 1].forEach(s => {
-            const pn = pin(0, 0, s * (ARM_Z_OUT + ARM_Z_IN) / 2, 20, ARM_T * 2 + 26, MAT.steel);
+            // Long enough that both heads finish clear of the steel they
+            // are holding. At the old length the head landed with its
+            // face in the same plane as the face of the arm, which is
+            // the other place the stipple was coming from - a pin head
+            // sits proud of the plate, it does not sit flush in it.
+            const len = (ARM_Z_OUT - ARM_Z_IN) + ARM_T + 12;
+            const pn = pin(0, 0, s * (ARM_Z_OUT + ARM_Z_IN) / 2, 20, len, MAT.steel);
             g.add(pn);
         });
         joints[k] = g;
