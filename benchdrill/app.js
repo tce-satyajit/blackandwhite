@@ -352,7 +352,7 @@ function init3D() {
     scene.background = new THREE.Color(0xf1f5f9);
 
     camera = new THREE.PerspectiveCamera(42, 1, 20, 9000);
-    camera.position.set(1150, 1180, 1400);
+    camera.position.set(1514, 1104, 1896);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -367,7 +367,7 @@ function init3D() {
     controls.maxDistance = 5000;
     controls.maxPolarAngle = Math.PI / 2 + 0.02;
     controls.autoRotateSpeed = 0.9;
-    controls.target.set(0, 470, -40);
+    controls.target.set(0, 169, -40);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.26));
     const key = new THREE.DirectionalLight(0xffffff, 0.72);
@@ -1236,7 +1236,9 @@ function update3D() {
 }
 
 const VIEWS = {
-    bench: { pos: [1010, 1030, 1250], tgt: [0, 470, -40] },
+    // Far enough back, and aimed low enough, that the whole machine -
+    // motor to table - sits above the control panel with it open.
+    bench: { pos: [1514, 1104, 1896], tgt: [0, 169, -40] },
     // Everything that matters in one frame: the belt driving it at the
     // top, the drill in the middle, the work at the bottom. This is the
     // view for watching cause follow through to effect.
