@@ -128,9 +128,42 @@ const ARM_Z_OUT = 355, ARM_Z_IN = 295;
 const RAM_Z = 150;
 const ARM_W = 96, ARM_T = 26;         // the flat bar an arm is cut from
 
+// ---- what is actually on the deck -------------------------------
+// Not a cube. A timber crate banded down to a block pallet - and the
+// pallet is a piece of engineering in its own right: three bottom
+// boards, nine blocks, three bearers and five deck boards, in that
+// order, because that is the only order that lets a fork in from all
+// four sides.
+const PAL_X = 1000, PAL_Z = 760;
+const PAL_BOARD = 22, PAL_BLOCK_H = 78;
+const PAL_H = PAL_BOARD * 3 + PAL_BLOCK_H;   // 144, near enough a euro pallet
+const PAL_BX = 427, PAL_BZ = 330;            // where the bearers and blocks sit
+// The crate, measured over its four corner posts. The boarding is
+// nailed to the outside of them, which is why it stands proud.
+const CRATE_X = 900, CRATE_Z = 660;
+const CRATE_T = 24;                          // board thickness
+const CRATE_BOARD = 130, CRATE_PITCH = 175;  // a course, and the pitch to the next
+const CRATE_POST = 62;
+const POST_NOM = 1000;                       // posts are drawn this long and scaled
+const ROWS_MAX = 5;
+const KG_PER_ROW = 420;
+const BAND_X = 250;                          // where the two steel bands run over
+
+// The crate gains a course of boarding for every 420 kg. It is the one
+// thing tying the number on the slider to the object on the deck: you
+// should be able to see how heavily it is loaded without reading
+// anything.
+const loadRows = () => clamp(Math.ceil(P.load / KG_PER_ROW), 1, ROWS_MAX);
+const crateH = () => loadRows() * CRATE_PITCH - (CRATE_PITCH - CRATE_BOARD) + CRATE_T;
+const loadH = () => PAL_H + crateH();        // pallet foot to crate lid
+const loadShown = () => state.crate && P.load > 0;
+
 let scene, camera, renderer, controls;
 let floor3, grid3, liftGrp;
 let armsL = [], armsU = [], deckGrp, crateGrp;
+// The parts of the load that have to move or come and go as the mass on
+// the slider changes. Everything is built once; nothing is rebuilt.
+const loadParts = { posts: [], rows: [], bands: [], lid: null, goods: null };
 const joints = {};   // C D E F A B N M, named for the schematic
 let ramGrp = [], rollerL = [], rollerU = [];
 let arrowRam = [], arrowLoad = null;
@@ -190,47 +223,243 @@ function pin(x, y, z, r, len, mat) {
     return g;
 }
 
-// The maker's plate on the skirt. Every lift table in the world carries
-// one, usually with the things you are not allowed to forget on it.
-let badgeTex = null;
-function badgeTexture() {
-    if (badgeTex) return badgeTex;
+// Hazard striping. Drawn as a tile rather than laid out as a row of
+// little bars: a bar has to be mitred to whatever it sits on, and at an
+// angle it never quite is, whereas a band carrying a tile is exactly
+// the depth of the plate however far along it runs.
+const HAZ_TILE = 160;
+let hazTex = null;
+function hazardTexture() {
+    if (hazTex) return hazTex;
+    const S = 128;
     const c = document.createElement('canvas');
-    c.width = 680; c.height = 124;
+    c.width = c.height = S;
     const g = c.getContext('2d');
-    g.fillStyle = '#1d2024'; g.fillRect(0, 0, 680, 124);
-    g.strokeStyle = '#d7dde4'; g.lineWidth = 4; g.strokeRect(8, 8, 664, 108);
-    g.textBaseline = 'middle';
-    g.fillStyle = '#f2f5f9';
-    g.font = 'bold 58px Inter, Helvetica, Arial, sans-serif';
-    g.fillText('TCE', 34, 58);
-    g.fillStyle = '#7ed957';
-    g.fillText('LIFT', 140, 58);
-    g.fillStyle = '#aebdcc';
-    g.font = '22px Inter, Helvetica, Arial, sans-serif';
-    g.fillText('2000 kg  \u00b7  1.8 m  \u00b7  250 bar', 34, 98);
-    badgeTex = new THREE.CanvasTexture(c);
-    return badgeTex;
+    g.fillStyle = '#dcae16'; g.fillRect(0, 0, S, S);
+    g.fillStyle = '#191b1e';
+    // Forty-five degrees, one whole period across the tile, so it meets
+    // itself in both directions however long the band is.
+    for (let k = -1; k <= 1; k++) {
+        const o = k * S;
+        g.beginPath();
+        g.moveTo(o, 0); g.lineTo(o + S / 2, 0);
+        g.lineTo(o + S / 2 + S, S); g.lineTo(o + S, S);
+        g.closePath(); g.fill();
+    }
+    hazTex = new THREE.CanvasTexture(c);
+    hazTex.wrapS = hazTex.wrapT = THREE.RepeatWrapping;
+    hazTex.repeat.set(1 / HAZ_TILE, 1 / HAZ_TILE);
+    hazTex.anisotropy = 8;
+    return hazTex;
 }
 
-// The name, big enough to read off the front of the machine.
-let logoTex = null;
-function logoTexture() {
-    if (logoTex) return logoTex;
+// =============================================================
+//  Timber, and the marks sprayed on it
+// =============================================================
+// Wood is not a colour, it is a grain, and at this size the grain is
+// what the eye reads first: a plain brown box says cardboard however
+// carefully it is lit.
+//
+// One tile is 400 mm of board. Every wooden part is mapped in
+// millimetres - which is what an extruded shape gives for free - so the
+// grain comes out the same size on a pallet board as on a crate rail
+// without anything being scaled to fit.
+const WOOD_TILE = 400;
+
+function woodTexture(base, dark, light, seed) {
+    const S = 512;
     const c = document.createElement('canvas');
-    c.width = 720; c.height = 152;
+    c.width = c.height = S;
     const g = c.getContext('2d');
-    g.clearRect(0, 0, 720, 152);
-    g.textBaseline = 'middle';
-    g.font = 'bold 96px Inter, Helvetica, Arial, sans-serif';
-    g.fillStyle = 'rgba(0,0,0,0.45)';
-    g.fillText('TCE-LAB', 30, 82);
-    g.fillStyle = '#b6b7b8';
-    g.fillText('TCE-LAB', 26, 78);
-    
-    logoTex = new THREE.CanvasTexture(c);
-    logoTex.anisotropy = 8;
-    return logoTex;
+    let s = seed * 7919 + 13;
+    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+
+    g.fillStyle = base;
+    g.fillRect(0, 0, S, S);
+
+    // The fibres. They run the length of the board and wander as they
+    // go, but the wander is whole cycles across the tile, so the tile
+    // still meets itself where it repeats.
+    for (let i = 0; i < 80; i++) {
+        const y = rnd() * S;
+        const k = 1 + Math.floor(rnd() * 3);
+        const amp = 2 + rnd() * 7;
+        const ph = rnd() * Math.PI * 2;
+        g.strokeStyle = rnd() < 0.72 ? dark : light;
+        g.globalAlpha = 0.06 + rnd() * 0.22;
+        g.lineWidth = 0.5 + rnd() * 2.6;
+        g.beginPath();
+        for (let x = 0; x <= S; x += 6) {
+            const yy = y + Math.sin((x / S) * Math.PI * 2 * k + ph) * amp;
+            if (x === 0) g.moveTo(x, yy); else g.lineTo(x, yy);
+        }
+        g.stroke();
+    }
+
+    // A knot or two, with the grain sweeping round them the way it has
+    // to - a knot is a branch the tree grew round.
+    const knots = 1 + Math.floor(rnd() * 2);
+    for (let i = 0; i < knots; i++) {
+        const cx = 70 + rnd() * (S - 140), cy = 50 + rnd() * (S - 100);
+        const r = 7 + rnd() * 8;
+        g.strokeStyle = dark;
+        for (let j = 7; j > 0; j--) {
+            g.globalAlpha = 0.10 + 0.05 * (7 - j);
+            g.lineWidth = 1.1;
+            g.beginPath();
+            g.ellipse(cx, cy, r * j * 0.5, r * j * 0.2, 0, 0, Math.PI * 2);
+            g.stroke();
+        }
+        g.globalAlpha = 0.8;
+        g.fillStyle = dark;
+        g.beginPath();
+        g.ellipse(cx, cy, r * 0.5, r * 0.28, 0, 0, Math.PI * 2);
+        g.fill();
+    }
+
+    // Saw marks: faint, and across the grain rather than along it.
+    g.globalAlpha = 0.05;
+    g.strokeStyle = dark;
+    g.lineWidth = 1;
+    for (let i = 0; i < 26; i++) {
+        const x = rnd() * S;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 5, S); g.stroke();
+    }
+    g.globalAlpha = 1;
+
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(1 / WOOD_TILE, 1 / WOOD_TILE);
+    t.anisotropy = 8;
+    return t;
+}
+
+// Pallet blocks are not sawn timber at all - they are chips and glue
+// pressed into a brick, and up close that is exactly what they look
+// like.
+function chipTexture() {
+    const S = 256;
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    g.fillStyle = '#8d7351';
+    g.fillRect(0, 0, S, S);
+    let s = 99;
+    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 1500; i++) {
+        const w = 3 + rnd() * 16, h = 1.5 + rnd() * 4;
+        g.save();
+        g.translate(rnd() * S, rnd() * S);
+        g.rotate(rnd() * Math.PI);
+        g.globalAlpha = 0.15 + rnd() * 0.4;
+        g.fillStyle = rnd() < 0.5 ? '#634c30' : '#bda67e';
+        g.fillRect(-w / 2, -h / 2, w, h);
+        g.restore();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(1 / 160, 1 / 160);
+    return t;
+}
+
+// The three marks every crate in the world carries, drawn rather than
+// written, because they have to be read by someone who does not share
+// your alphabet.
+function glyphGlass(g, x, y, s) {
+    g.beginPath();
+    g.moveTo(x - 12 * s, y - 26 * s); g.lineTo(x + 12 * s, y - 26 * s);
+    g.lineTo(x + 7 * s, y - 2 * s); g.lineTo(x - 7 * s, y - 2 * s);
+    g.closePath(); g.stroke();
+    g.beginPath();
+    g.moveTo(x, y - 2 * s); g.lineTo(x, y + 18 * s); g.stroke();
+    g.beginPath();
+    g.moveTo(x - 12 * s, y + 20 * s); g.lineTo(x + 12 * s, y + 20 * s); g.stroke();
+    // the crack, which is the whole reason the glass is drawn
+    g.beginPath();
+    g.moveTo(x + 4 * s, y - 26 * s); g.lineTo(x - 2 * s, y - 17 * s);
+    g.lineTo(x + 4 * s, y - 12 * s); g.lineTo(x - 2 * s, y - 3 * s); g.stroke();
+}
+function glyphBrolly(g, x, y, s) {
+    g.beginPath(); g.arc(x, y, 22 * s, Math.PI, 0); g.stroke();
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 20 * s); g.stroke();
+    g.beginPath(); g.arc(x - 6 * s, y + 20 * s, 6 * s, 0, Math.PI); g.stroke();
+    [[-30, -10], [30, -10], [-24, 12], [24, 12]].forEach(([dx, dy]) => {
+        g.beginPath();
+        g.moveTo(x + dx * s, y + dy * s);
+        g.lineTo(x + (dx - 4) * s, y + (dy + 12) * s);
+        g.stroke();
+    });
+}
+function glyphUp(g, x, y, s) {
+    [-13, 13].forEach(dx => {
+        g.beginPath();
+        g.moveTo(x + dx * s, y + 22 * s); g.lineTo(x + dx * s, y - 24 * s); g.stroke();
+        g.beginPath();
+        g.moveTo(x + (dx - 9) * s, y - 12 * s); g.lineTo(x + dx * s, y - 26 * s);
+        g.lineTo(x + (dx + 9) * s, y - 12 * s); g.stroke();
+    });
+    g.beginPath();
+    g.moveTo(x - 26 * s, y + 24 * s); g.lineTo(x + 26 * s, y + 24 * s); g.stroke();
+}
+
+// The stencil on the side of the crate. The net weight on it is the
+// number on the slider, so the crate is labelled with what the rams are
+// actually being asked to lift. Redrawn whenever that changes.
+//
+// The gaps in the middle of the layout are not accidents: that is where
+// the two steel bands come down the face, and a stencil that reads
+// "NET 6" and then a band is worse than one laid out around it.
+let markCanvas = null, markTex = null, markKg = -1;
+const MARK_W = 1152, MARK_H = 160;
+
+function drawMarks() {
+    markKg = P.load;
+    const g = markCanvas.getContext('2d');
+    g.clearRect(0, 0, MARK_W, MARK_H);
+    g.lineCap = g.lineJoin = 'round';
+    g.strokeStyle = g.fillStyle = '#23262b';
+    g.textBaseline = 'alphabetic';
+
+    g.lineWidth = 5;
+    glyphGlass(g, 58, 76, 1.3);
+    glyphUp(g, 148, 76, 1.25);
+    glyphBrolly(g, 1052, 62, 1.25);
+
+    g.font = 'bold 46px Inter, Helvetica, Arial, sans-serif';
+    g.fillText('SATYAJIT', 295, 70);
+    g.font = '26px Inter, Helvetica, Arial, sans-serif';
+    g.fillText('LOT 41-27  ·  1 OF 1', 295, 110);
+
+    const gross = Math.round(P.load + 25 + 18 * loadRows());
+    g.font = 'bold 46px Inter, Helvetica, Arial, sans-serif';
+    g.fillText('NET ' + P.load + ' kg', 560, 70);
+    g.font = '26px Inter, Helvetica, Arial, sans-serif';
+    g.fillText('GROSS ' + gross + ' kg', 560, 110);
+
+    // Stencils are sprayed, and spray is never solid. Punching holes
+    // back out of what has just been drawn is the cheapest way to say
+    // so, and it is the difference between a label and a print-out.
+    g.globalCompositeOperation = 'destination-out';
+    let s = 7;
+    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 2400; i++) {
+        g.globalAlpha = 0.2 + rnd() * 0.5;
+        g.beginPath();
+        g.arc(rnd() * MARK_W, rnd() * MARK_H, 0.6 + rnd() * 2.1, 0, Math.PI * 2);
+        g.fill();
+    }
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = 'source-over';
+    if (markTex) markTex.needsUpdate = true;
+}
+
+function markTexture() {
+    markCanvas = document.createElement('canvas');
+    markCanvas.width = MARK_W; markCanvas.height = MARK_H;
+    drawMarks();
+    markTex = new THREE.CanvasTexture(markCanvas);
+    markTex.anisotropy = 8;
+    return markTex;
 }
 
 function init3D() {
@@ -262,7 +491,10 @@ function init3D() {
     key.castShadow = true;
     key.shadow.mapSize.width = key.shadow.mapSize.height = 2048;
     key.shadow.camera.left = -1900; key.shadow.camera.right = 1900;
-    key.shadow.camera.top = 2600; key.shadow.camera.bottom = -400;
+    // High enough to hold a full crate on a deck at full height - about
+    // 2.95 m to the lid - or the load stops casting a shadow just as it
+    // gets big enough to need one.
+    key.shadow.camera.top = 3500; key.shadow.camera.bottom = -400;
     key.shadow.camera.far = 8000;
     key.shadow.bias = -0.00018;
     key.shadow.normalBias = 2;
@@ -308,22 +540,43 @@ function init3D() {
     MAT.rubber   = new THREE.MeshStandardMaterial({ color: 0x22252a, metalness: 0.04, roughness: 0.88 });
     // Solid polyurethane, not rubber: pale, hard and slightly glossy.
     MAT.tyre     = new THREE.MeshStandardMaterial({ color: 0xc6c9cc, metalness: 0.05, roughness: 0.55 });
-    MAT.panel    = new THREE.MeshStandardMaterial({ color: 0x8f3226, metalness: 0.25, roughness: 0.52 });
     MAT.motor    = new THREE.MeshStandardMaterial({ color: 0x2d323a, metalness: 0.52, roughness: 0.44 });
     MAT.tank     = new THREE.MeshStandardMaterial({ color: 0x3c434c, metalness: 0.62, roughness: 0.34 });
     MAT.deck     = new THREE.MeshStandardMaterial({ color: 0xb4bac2, metalness: 0.66, roughness: 0.36 });
-    MAT.crate    = new THREE.MeshStandardMaterial({ color: 0xa87a42, metalness: 0.05, roughness: 0.62 });
     MAT.hose     = new THREE.MeshStandardMaterial({ color: 0x1a1c20, metalness: 0.2, roughness: 0.7 });
+    // Three boards off the same stack, no two of them alike. Handing
+    // them out in turn is what stops a crate reading as one moulding.
+    // The grain doubles as the bump map, so it catches the light as
+    // relief and not just as a picture of relief.
+    MAT.wood = [
+        ['#c2a173', '#6b4f2c', '#e4cda6', 1],
+        ['#b59468', '#5c4324', '#d8c096', 2],
+        ['#caab7f', '#755738', '#e8d4b0', 3]
+    ].map(([base, dark, light, seed]) => {
+        const tex = woodTexture(base, dark, light, seed);
+        return new THREE.MeshStandardMaterial({
+            map: tex, bumpMap: tex, bumpScale: 0.5,
+            metalness: 0.02, roughness: 0.8
+        });
+    });
+    MAT.block    = (() => {
+        const tex = chipTexture();
+        return new THREE.MeshStandardMaterial({
+            map: tex, bumpMap: tex, bumpScale: 0.4,
+            metalness: 0.02, roughness: 0.9
+        });
+    })();
+    // Whatever is in the crate, seen through the gaps between courses.
+    MAT.goods    = new THREE.MeshStandardMaterial({ color: 0x4d5560, metalness: 0.08, roughness: 0.58 });
+    // Steel strapping: thin, bright and pulled tight.
+    MAT.band     = new THREE.MeshStandardMaterial({ color: 0xc3cad2, metalness: 0.92, roughness: 0.26 });
+    MAT.mark     = new THREE.MeshStandardMaterial({ map: markTexture(), transparent: true,
+                                                    alphaTest: 0.1, metalness: 0, roughness: 0.9 });
     // Hazard striping only works as a pair. On a yellow machine the
     // stripes are the black half.
     MAT.warn     = new THREE.MeshStandardMaterial({ color: 0x191b1e, metalness: 0.2, roughness: 0.55 });
-    MAT.logo     = new THREE.MeshStandardMaterial({ color: 0xffffff, map: logoTexture(),
-                                                    metalness: 0.15, roughness: 0.5,
-                                                    transparent: true, alphaTest: 0.25,
-                                                    side: THREE.DoubleSide });
-    MAT.badge    = new THREE.MeshStandardMaterial({ color: 0xffffff, map: badgeTexture(),
-                                                    metalness: 0.2, roughness: 0.5,
-                                                    transparent: true, side: THREE.DoubleSide });
+    MAT.hazard   = new THREE.MeshStandardMaterial({ map: hazardTexture(),
+                                                    metalness: 0.25, roughness: 0.5 });
     MAT.forceRam = new THREE.MeshStandardMaterial({ color: 0x8b5cf6, metalness: 0.2, roughness: 0.4,
                                                     emissive: 0x4c1d95, emissiveIntensity: 0.35 });
     MAT.forceW   = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.2, roughness: 0.4,
@@ -341,7 +594,11 @@ function init3D() {
     MAT.tank.envMapIntensity = 1.0;
     MAT.rubber.envMapIntensity = 0.2;
     MAT.tyre.envMapIntensity = 0.5;
-    MAT.panel.envMapIntensity = 0.7;
+    MAT.wood.forEach(m => { m.envMapIntensity = 0.3; });
+    MAT.block.envMapIntensity = 0.25;
+    MAT.hazard.envMapIntensity = 0.7;
+    MAT.goods.envMapIntensity = 0.4;
+    MAT.band.envMapIntensity = 1.6;
 
     buildLift();
 }
@@ -359,6 +616,7 @@ function buildLift() {
     buildScissor();
     buildRams();
     buildDeck();
+    buildLoad();
     buildArrows();
 }
 
@@ -379,25 +637,6 @@ function buildBase() {
         side.position.set(0, yMid, s2 * (BASE_Z - 17));
         side.castShadow = side.receiveShadow = true;
         g.add(side);
-
-        // The access panel, let into the side. Everything that ever needs
-        // a spanner on it is behind one of these.
-        const panel = new THREE.Mesh(roundedBox(540, BASE_H - 62, 12, 8), MAT.panel);
-        panel.position.set(60, yMid, s2 * (BASE_Z + 1));
-        g.add(panel);
-        [-1, 1].forEach(sx => {
-            const screw = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 10, 12), MAT.steel);
-            screw.rotation.x = Math.PI / 2;
-            screw.position.set(60 + sx * 240, yMid, s2 * (BASE_Z + 8));
-            g.add(screw);
-        });
-
-        // The name, on the panel and dead centre of the side - the one
-        // stretch of the machine that no wheel and no arm ever crosses.
-        const logo = new THREE.Mesh(new THREE.PlaneGeometry(340, 72), MAT.logo);
-        logo.position.set(60, yMid + 2, s2 * (BASE_Z + 8));
-        logo.rotation.y = s2 > 0 ? 0 : Math.PI;
-        g.add(logo);
 
         // a rubbing strip along the bottom, which is what actually meets
         // the pallet, the kerb and everything else it gets pushed into
@@ -739,29 +978,181 @@ function buildDeck() {
         lug.position.set(FIX_X, 26, s * ARM_Z_IN);
         deckGrp.add(lug);
     });
-    const badge = new THREE.Mesh(new THREE.PlaneGeometry(340, 62), MAT.badge);
-    badge.position.set(-380, 42, DECK_Z + 2);
-    deckGrp.add(badge);
-    // hazard striping on the deck edge, which is what these actually wear
-    for (let i = 0; i < 9; i++) {
-        const st = new THREE.Mesh(roundedBox(46, 22, 6, 2), MAT.warn);
-        st.position.set(300 + i * 52, 74, DECK_Z + 2);
-        st.rotation.z = -0.5;
-        deckGrp.add(st);
-    }
-    liftGrp.add(deckGrp);
-
-    crateGrp = new THREE.Group();
-    const box = new THREE.Mesh(roundedBox(560, 420, 560, 10), MAT.crate);
-    box.position.y = 210;
-    box.castShadow = box.receiveShadow = true;
-    crateGrp.add(box);
+    // Hazard striping right round the edge of the deck plate, which is
+    // what these actually wear - all four edges, because the edge you
+    // can walk into is every edge. The band is exactly the depth of the
+    // plate and carries the stripes as a tile, so nothing hangs below
+    // the plate or stands proud above it whatever length it runs.
+    const hy = DECK_T - 13;
     [-1, 1].forEach(s => {
-        const strap = new THREE.Mesh(roundedBox(566, 34, 60, 4), MAT.steel);
-        strap.position.set(0, 210, s * 200);
-        crateGrp.add(strap);
+        const long = new THREE.Mesh(roundedBox(DECK_X * 2 + 16, 26, 8, 2), MAT.hazard);
+        long.position.set(0, hy, s * (DECK_Z + 4));
+        deckGrp.add(long);
+        const short = new THREE.Mesh(roundedBox(DECK_Z * 2, 26, 8, 2), MAT.hazard);
+        short.rotation.y = Math.PI / 2;
+        short.position.set(s * (DECK_X + 4), hy, 0);
+        deckGrp.add(short);
     });
+    liftGrp.add(deckGrp);
+}
+
+// =============================================================
+//  The load
+// =============================================================
+const woodOf = i => MAT.wood[((i % MAT.wood.length) + MAT.wood.length) % MAT.wood.length];
+
+function buildLoad() {
+    crateGrp = new THREE.Group();
+    // A pallet is never quite square to the deck. A degree and a half of
+    // it is the difference between something put there and something
+    // modelled there.
+    crateGrp.rotation.y = 0.026;
+    buildPallet();
+    buildCrate();
     liftGrp.add(crateGrp);
+}
+
+function buildPallet() {
+    const g = new THREE.Group();
+    let n = 0;
+
+    // three bottom boards, running the length
+    [0, -1, 1].forEach(i => {
+        const b = new THREE.Mesh(roundedBox(PAL_X, PAL_BOARD, 100, 3), woodOf(n++));
+        b.position.set(0, PAL_BOARD / 2, i * PAL_BZ);
+        b.castShadow = b.receiveShadow = true;
+        g.add(b);
+    });
+
+    // nine blocks, which are what actually hold the fork openings open
+    [0, -1, 1].forEach(ix => [0, -1, 1].forEach(iz => {
+        const bl = new THREE.Mesh(roundedBox(120, PAL_BLOCK_H, 100, 4), MAT.block);
+        bl.position.set(ix * PAL_BX, PAL_BOARD + PAL_BLOCK_H / 2, iz * PAL_BZ);
+        bl.castShadow = bl.receiveShadow = true;
+        g.add(bl);
+    }));
+
+    // three bearers across them
+    [0, -1, 1].forEach(i => {
+        const b = new THREE.Mesh(roundedBox(PAL_Z, PAL_BOARD, 145, 3), woodOf(n++));
+        b.rotation.y = Math.PI / 2;
+        b.position.set(i * PAL_BX, PAL_BOARD + PAL_BLOCK_H + PAL_BOARD / 2, 0);
+        b.castShadow = b.receiveShadow = true;
+        g.add(b);
+    });
+
+    // and the deck boards on top: wide, narrow, wide, narrow, wide, with
+    // the gaps that let the rain off and the forks of a pallet truck in
+    const wide = [145, 100, 145, 100, 145];
+    const gap = (PAL_Z - wide.reduce((a, b) => a + b, 0)) / (wide.length - 1);
+    let z = -PAL_Z / 2;
+    wide.forEach(w => {
+        const b = new THREE.Mesh(roundedBox(PAL_X, PAL_BOARD, w, 3), woodOf(n++));
+        b.position.set(0, PAL_H - PAL_BOARD / 2, z + w / 2);
+        b.castShadow = b.receiveShadow = true;
+        g.add(b);
+        // a nail down into each bearer, which is where they always are
+        [0, -1, 1].forEach(ix => {
+            const nail = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 3, 8), MAT.steel);
+            nail.position.set(ix * PAL_BX, PAL_H - 0.5, z + w / 2);
+            g.add(nail);
+        });
+        z += w + gap;
+    });
+    crateGrp.add(g);
+}
+
+function buildCrate() {
+    const g = new THREE.Group();
+    g.position.y = PAL_H;
+
+    // Four corner posts, drawn a metre long and scaled. The only thing
+    // the load changes about a post is how far up it goes, and stretching
+    // grain that already runs lengthwise is the one stretch nobody sees.
+    [-1, 1].forEach(sx => [-1, 1].forEach(sz => {
+        const p = new THREE.Mesh(roundedBox(CRATE_POST, POST_NOM, CRATE_POST, 6), woodOf(1));
+        p.position.set(sx * (CRATE_X - CRATE_POST) / 2, POST_NOM / 2,
+                       sz * (CRATE_Z - CRATE_POST) / 2);
+        p.castShadow = p.receiveShadow = true;
+        loadParts.posts.push(p);
+        g.add(p);
+    }));
+
+    // The courses of boarding, nailed to the outside of the posts, the
+    // long boards lapping the ends so the corner is closed. All five are
+    // built; how many are shown is the load.
+    for (let k = 0; k < ROWS_MAX; k++) {
+        const row = new THREE.Group();
+        row.position.y = k * CRATE_PITCH + CRATE_BOARD / 2;
+        [-1, 1].forEach(s => {
+            const long = new THREE.Mesh(
+                roundedBox(CRATE_X + CRATE_T * 2, CRATE_BOARD, CRATE_T, 3), woodOf(k));
+            long.position.z = s * (CRATE_Z + CRATE_T) / 2;
+            long.castShadow = long.receiveShadow = true;
+            row.add(long);
+            const end = new THREE.Mesh(
+                roundedBox(CRATE_Z, CRATE_BOARD, CRATE_T, 3), woodOf(k + 1));
+            end.rotation.y = Math.PI / 2;
+            end.position.x = s * (CRATE_X + CRATE_T) / 2;
+            end.castShadow = end.receiveShadow = true;
+            row.add(end);
+        });
+        loadParts.rows.push(row);
+        g.add(row);
+    }
+
+    // the lid, four boards across with the gaps left between them
+    const lid = new THREE.Group();
+    const span = CRATE_Z + CRATE_T * 2;
+    const lw = span / 4;
+    for (let i = 0; i < 4; i++) {
+        const b = new THREE.Mesh(roundedBox(CRATE_X + CRATE_T * 2, CRATE_T, lw - 9, 3), woodOf(i));
+        b.position.z = -span / 2 + lw * (i + 0.5);
+        b.castShadow = b.receiveShadow = true;
+        lid.add(b);
+    }
+    loadParts.lid = lid;
+    g.add(lid);
+
+    // whatever is inside, seen through the gaps between the courses
+    const goods = new THREE.Mesh(new THREE.BoxGeometry(CRATE_X - 30, 1, CRATE_Z - 30), MAT.goods);
+    goods.castShadow = goods.receiveShadow = true;
+    loadParts.goods = goods;
+    g.add(goods);
+
+    // the stencil, on the bottom course - the only one that is always there
+    [-1, 1].forEach(s => {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(850, 118), MAT.mark);
+        m.position.set(0, CRATE_BOARD / 2, s * (span / 2 + 1.5));
+        m.rotation.y = s > 0 ? 0 : Math.PI;
+        g.add(m);
+    });
+
+    // Two steel bands over the lid and down through the pallet's fork
+    // openings. They are the only thing making the crate and the pallet
+    // one object rather than two stacked ones - which is exactly what a
+    // lift is entitled to assume before it picks the lot up.
+    [-1, 1].forEach(s => {
+        const b = new THREE.Group();
+        b.position.x = s * BAND_X;
+        const w = CRATE_Z + CRATE_T * 2 + 22;
+        const top = new THREE.Mesh(roundedBox(58, 5, w, 2), MAT.band);
+        top.castShadow = true;
+        const bot = new THREE.Mesh(roundedBox(58, 5, w, 2), MAT.band);
+        bot.position.y = -PAL_BOARD - 6;
+        const sides = [];
+        [-1, 1].forEach(sz => {
+            const side = new THREE.Mesh(roundedBox(58, POST_NOM, 5, 2), MAT.band);
+            side.position.z = sz * w / 2;
+            sides.push(side);
+            b.add(side);
+        });
+        b.add(top); b.add(bot);
+        loadParts.bands.push({ top: top, sides: sides });
+        g.add(b);
+    });
+
+    crateGrp.add(g);
 }
 
 // Two arrows to the same scale: what the rams are pushing with, and what
@@ -802,6 +1193,34 @@ function setArms(list, yBase, midX, h, th) {
     });
 }
 
+// The load is built once at its largest and then told how much of
+// itself to be. Nothing here allocates, so the mass slider can be
+// dragged the whole way across without the frame rate noticing.
+function updateLoad(y2) {
+    crateGrp.visible = loadShown();
+    crateGrp.position.set(P.offset, y2 + DECK_T, 0);
+    if (!crateGrp.visible) return;
+
+    const rows = loadRows(), h = crateH();
+    loadParts.rows.forEach((r, i) => { r.visible = i < rows; });
+    loadParts.posts.forEach(p => {
+        p.scale.y = h / POST_NOM;
+        p.position.y = h / 2;
+    });
+    loadParts.lid.position.y = h - CRATE_T / 2;
+    const gh = h - CRATE_T - 16;
+    loadParts.goods.scale.y = gh;
+    loadParts.goods.position.y = 8 + gh / 2;
+    loadParts.bands.forEach(b => {
+        b.top.position.y = h + 4;
+        b.sides.forEach(side => {
+            side.scale.y = (h + 32) / POST_NOM;
+            side.position.y = (h - 24) / 2;
+        });
+    });
+    if (markKg !== P.load) drawMarks();
+}
+
 function update3D() {
     if (!gl) return;
     const th = state.th, c = Math.cos(th), s = Math.sin(th);
@@ -826,8 +1245,7 @@ function update3D() {
     joints.B.position.set(rollX, y2, 0);
     joints.N.position.set(midX, y0 + h / 2, 0);
     joints.M.position.set(midX, y1 + h / 2, 0);
-    crateGrp.position.set(P.offset, y2 + DECK_T, 0);
-    crateGrp.visible = state.crate;
+    updateLoad(y2);
 
     // the rams, from the cosine-rule triangle
     const bx = FIX_X + RAM_P, by = y0;
@@ -874,15 +1292,17 @@ function update3D() {
         arrowLoad.userData.head.rotation.z = Math.PI;
         // Above whatever is on the deck, pointing down onto it - the
         // weight has to be seen arriving somewhere.
-        arrowLoad.position.set(P.offset, y2 + DECK_T + (state.crate ? 430 : 0) + len + 80, 0);
+        arrowLoad.position.set(P.offset, y2 + DECK_T + (loadShown() ? loadH() : 0) + len + 80, 0);
         arrowLoad.rotation.z = 0;
     }
 
-    // The beacon: on through the warning and all the while it moves,
-    // dark the moment it is holding. Two flashes a second, which is what
-    // these actually run at.
+    // The beacon: on through the warning and all the while a direction
+    // is being asked for, dark the moment it is not. It follows the
+    // command and not the run-down, so arriving at either stop puts it
+    // out at once rather than leaving it flashing over a machine that
+    // has finished moving.
     if (beaconLamp) {
-        const live = state.cmd !== 0 || state.warn > 0 || state.motion > 0.05;
+        const live = state.cmd !== 0 || state.warn > 0;
         const on = live && Math.sin(performance.now() / 1000 * Math.PI * 4) > 0;
         beaconLamp.material.emissiveIntensity = on ? 2.4 : 0.08;
         beaconLight.intensity = on ? 2.2 : 0;
@@ -989,13 +1409,18 @@ function oneShot(el, vol) {
     el.play().catch(() => {});
 }
 
+// Already as far as it goes that way. A machine sat on its stop does
+// not warn, flash or beep at a button it cannot act on.
+const atStop = dir => dir > 0 ? state.th >= TH_MAX - 1e-9 : state.th <= TH_MIN + 1e-9;
+
 // Sounded the moment a direction is asked for, before any of it moves.
 function warnAndGo(dir) {
+    if (atStop(dir)) { state.cmd = 0; state.warn = 0; return; }
     state.cmd = dir;
     state.lastDir = dir;
     state.warn = WARN_TIME;
     loopOff(aRaise); loopOff(aLower);
-    oneShot(aBeep, 0.7);
+    oneShot(aBeep, 0.25);
 }
 
 function soundUpdate() {
