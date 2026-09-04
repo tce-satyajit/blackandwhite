@@ -662,7 +662,7 @@ function init3D() {
     scene.background = new THREE.Color(0x0f172a);
 
     camera = new THREE.PerspectiveCamera(40, 1, 20, 12000);
-    camera.position.set(920, 740, 1900);
+    camera.position.set(1265, 468, 2736);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -677,7 +677,7 @@ function init3D() {
     controls.maxDistance = 6000;
     controls.maxPolarAngle = Math.PI / 2 + 0.02;
     controls.autoRotateSpeed = 0.8;
-    controls.target.set(0, 590, -90);
+    controls.target.set(0, 262, 0);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.30));
     const key = new THREE.DirectionalLight(0xfff4e2, 0.78);
@@ -1715,7 +1715,9 @@ function update3D() {
 }
 
 const VIEWS = {
-    whole:  { pos: [920, 740, 1900],  tgt: [0, 590, -90] },
+    // Far enough back, and aimed low enough, that the whole clock -
+    // bell to base - sits above the control panel with the panel open.
+    whole:  { pos: [1265, 468, 2736], tgt: [0, 262, 0] },
     dial:   { pos: [0, 793, 1180],    tgt: [0, 790, 0] },
     // The one frame that shows the argument: the anchor rocking,
     // one tooth going past, and the seconds hand moving one mark.
