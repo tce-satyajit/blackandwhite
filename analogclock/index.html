@@ -81,13 +81,13 @@
             </div>
 
             <!-- Sliders on the left, everything else beside them. -->
-            <div id="panel" class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col xl:flex-row gap-2">
+            <div id="panel" class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col gap-2">
                 <button id="btn-hide" title="Hide the controls (Esc)" aria-label="Hide the controls"
                         class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
                     <i class="fa-solid fa-chevron-down"></i>
                 </button>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 items-start xl:w-[420px] shrink-0">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-start">
                     <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
                         <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
                             <label for="s-len" class="font-semibold text-slate-700" title="The rating nut under the bob raises or lowers it, changing the length of the pendulum. This is the only adjustment a clock like this has.">Pendulum</label>
@@ -114,7 +114,7 @@
                     </div>
                 </div>
 
-                <div class="flex flex-wrap items-center justify-center xl:justify-start gap-2 flex-1 min-w-0">
+                <div class="flex flex-wrap items-center justify-center gap-2 min-w-0">
 
                     <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
                         <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="How fast time is run. The pendulum can only be drawn so fast, so past 60x it is shown slowed.">Time</div>
@@ -155,7 +155,10 @@
                         </div>
                     </div>
 
-                    <div class="flex items-center justify-center flex-wrap gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                </div>
+
+                <div class="flex flex-wrap items-center justify-center gap-2 min-w-0">
+                    <div class="flex items-center justify-center flex-wrap gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm min-w-0">
                         <button id="btn-run" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-700 text-white border-slate-900 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5">
                             <i class="fa-solid fa-play"></i><span id="run-label">Start</span>
                         </button>
