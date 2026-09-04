@@ -52,11 +52,15 @@
         </div>
     </header>
 
-    <main class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+    <main id="main" class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
 
-        <div class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+        <div id="stagecard" class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
 
-            <div class="w-full flex-1 min-h-0 relative bg-slate-50 flex overflow-hidden">
+            <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 flex overflow-hidden">
+                <button id="btn-show" title="Show the controls" aria-label="Show the controls"
+                        class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
+                    <i class="fa-solid fa-sliders"></i>
+                </button>
 
                 <!-- left: the car actually driving -->
                 <div class="relative h-full shrink-0 w-[36%] min-w-[260px]">
@@ -77,7 +81,11 @@
 
             </div>
 
-            <div class="p-2.5 bg-slate-50/90 border-t border-slate-200 flex flex-wrap items-center justify-center gap-3">
+            <div id="panel" class="p-2.5 bg-slate-50/90 border-t border-slate-200 flex flex-wrap items-center justify-center gap-3">
+                <button id="btn-hide" title="Hide the controls (Esc)" aria-label="Hide the controls"
+                        class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </button>
 
                 <!-- One control does the teaching: how hard the car is turning. -->
                 <div class="flex flex-col gap-1 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm w-[min(30rem,100%)]">

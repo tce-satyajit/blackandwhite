@@ -99,3 +99,211 @@ input[type=range]:focus-visible::-webkit-slider-thumb {
 #part-popover.dark h4 { color: #f1f5f9; }
 #part-popover.dark p { color: #cbd5e1; }
 #part-popover.dark button { color: #64748b; }
+
+/* ---- The controls float over the view ------------------------
+   The view is always the full size of the window under the header. The
+   control panel is not a slice taken out of it - it sits on top, so
+   hiding it uncovers the model rather than resizing the canvas.
+
+   That is worth doing for more than tidiness: the renderer only has to
+   be told about a size change that actually happens, and toggling the
+   panel is no longer one, so it costs nothing but a transform.
+
+   The header stays either way. It is not chrome in the way the panel is
+   - it is the read-out, and those numbers are exactly what you want in
+   front of you while watching the thing work. */
+#panel {
+    position: absolute;
+    left: 10px; right: 10px; bottom: 10px;
+    z-index: 25;
+    background: rgba(248, 250, 252, 0.44);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border-radius: 15px;
+    /* A card floating clear of the frame needs its own edge, or it reads
+       as a smudge on the glass rather than a panel sitting on top of it. */
+    border: 1px solid rgba(226, 232, 240, 0.7);
+    box-shadow: 0 8px 24px -6px rgba(15, 23, 42, 0.25);
+    transition: transform .22s ease, opacity .18s ease;
+}
+body.controls-off #panel {
+    transform: translateY(calc(100% + 14px));
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* ---- The controls, flattened ---------------------------------
+   The panel is already a card floating over the view. Giving every
+   control inside it another card stacks three shades of white on top of
+   the model and reads as a form rather than a control surface - so
+   inside the panel nothing has a fill, a border or a shadow of its own,
+   and everything is set in black.
+
+   Two things deliberately keep their fill, because losing it would lose
+   information rather than decoration:
+
+     .bg-slate-900  the pressed state of a button or the selected view -
+                    the only thing saying which one is active;
+     .bg-slate-100  the off state of a chip, which is how an unticked
+                    chip reads as unticked.
+
+   And .text-white is left alone, since it is what sits on those fills. */
+#panel .bg-white { background-color: transparent !important; }
+#panel .border,
+#panel .border-slate-200 { border-color: transparent !important; }
+#panel .shadow-sm,
+#panel .shadow { box-shadow: none !important; }
+
+#panel .text-slate-400,
+#panel .text-slate-500,
+#panel .text-slate-600,
+#panel .text-slate-700,
+#panel .text-slate-900,
+#panel label,
+#panel .mono { color: #000 !important; }
+
+/* The selected segment keeps its fill.
+   .mseg/.vseg/.wseg/.sseg/... set it in plain CSS rather than through a
+   utility class, so the transparent-background rule above outranks them
+   - and without this the row of view, model and filament buttons has no
+   way at all of showing which one is selected. Matched on the class
+   containing "seg" so it covers every one of them, including the ones
+   this project has not added yet. */
+#panel [class*="seg"].on,
+#panel .bg-white.on {
+    /* background-color, not the background shorthand: the shorthand also
+       resets background-image, and the utility class it has to beat sets
+       the longhand - so longhand against longhand is the comparison that
+       actually decides this. */
+    background-color: #0f172a !important;
+    color: #ffffff !important;
+}
+
+/* Some of these pages split their controls across two bars. Both are
+   wrapped in #panel, so the bars themselves have to give up the fill and
+   the rule between them - otherwise the floating card has two opaque
+   stripes inside it and the seam still shows. */
+#panel > div {
+    background-color: transparent !important;
+    border-top-color: transparent !important;
+}
+
+/* ---- The two halves of the toggle ----------------------------
+   One button cannot do this job. The one that hides the panel belongs
+   in the panel's own corner, which means it slides away with the panel
+   and cannot be the way back - so the one that brings it back has to
+   live outside the panel, and only appears once the panel has gone. */
+#btn-hide {
+    position: absolute;
+    bottom: 6px; right: 6px;
+    z-index: 30;
+}
+/* Room in the panel's bottom-right corner so the controls do not run
+   under the button. Both buttons are the same size and sit in the same
+   place on screen, so toggling swaps one for the other without anything
+   appearing to move. */
+#panel { padding-right: 44px; }
+
+#btn-show {
+    position: absolute;
+    right: 14px; bottom: 14px;
+    z-index: 30;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+}
+body.controls-off #btn-show {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* ---- The chips lose their pill -------------------------------
+   Each chip already carries a checkbox, and the checkbox already says
+   whether it is on. A filled pill behind it says the same thing twice,
+   and says it in the language of a button that has been pressed rather
+   than a box that has been ticked.
+
+   Both states go, not just one: leaving the off state filled was worse
+   than leaving both, because it read as the on state to anyone who did
+   not look at the box itself. The hover fill goes with them - the label
+   is still a pointer target, and a pill appearing under the cursor is
+   the same button language coming back. */
+#panel [id^="chip-"],
+#panel [id^="chip-"]:hover {
+    background-color: transparent !important;
+    border-color: transparent !important;
+}
+
+/* ---- Portrait ------------------------------------------------
+   On a narrow screen the sliders drop to one column and the chips wrap,
+   so the panel grows until it covers the whole view - 100% of it on the
+   projects with the most controls, which hides the very thing the
+   controls are for.
+
+   So on narrow screens the panel is capped and scrolls instead. The
+   model keeps the top half of the window and the controls become a
+   short scrolling sheet, which is the same bargain a phone makes
+   everywhere else.
+
+   The hide button has to come out of the panel to do it. It is
+   positioned against the panel, and a panel that scrolls would carry it
+   off the bottom of the screen with the rest of the content - so on
+   narrow screens it is pinned to the viewport instead, landing in the
+   same corner the show button uses. */
+@media (max-width: 700px) {
+    #panel {
+        max-height: 46vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        padding-right: 10px;
+    }
+    /* The rows already say flex-wrap: wrap, but shrink-0 stops them
+       shrinking to the panel's width, so they wrap against their own
+       content width instead and hang off the side. Letting them shrink
+       is what makes the wrapping actually happen; min-width: 0 is the
+       other half of it, since a flex item will not shrink below its
+       content unless told it may. */
+    #panel .shrink-0 {
+        flex-shrink: 1 !important;
+        min-width: 0 !important;
+    }
+    #btn-hide,
+    #btn-show {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+    }
+}
+
+/* ---- The read-out --------------------------------------------
+   Numbers - and in some of these, words - that change as the sim runs,
+   sitting on one row. Two things made the row shuffle sideways.
+
+   First, in a proportional face a 1 is narrower than a 0, so the width
+   changes even when the digit count does not. Tabular figures settle
+   that for the numeric fields.
+
+   Second, the content length changes: 9 becomes 240, "Crank-Rocker"
+   becomes "Non-Grashof". No font feature helps with that, so each field
+   gets a floor on its width.
+
+   The floors are in pixels, not ch, because several of these fields
+   hold words rather than digits and ch means nothing for those. Each was
+   measured by rendering every value the field can actually take and
+   keeping the widest, plus a little slack. */
+#stat-rpm,
+#stat-cutoff,
+#stat-dir,
+#stat-rpm-mobile,
+#stat-cutoff-mobile {
+    display: inline-block;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+#stat-rpm           { min-width: 48px; }
+#stat-cutoff        { min-width: 85px; }   /* "100% REV" - a percentage and a word */
+#stat-dir           { min-width: 35px; }   /* "fwd" / "rev" */
+#stat-rpm-mobile    { min-width: 48px; }   /* hidden at desktop width */
+#stat-cutoff-mobile { min-width: 85px; }   /* hidden at desktop width */

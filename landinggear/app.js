@@ -965,3 +965,39 @@ window.onload = function () {
     requestAnimationFrame(hideLoader);
     setTimeout(hideLoader, 400);
 };
+
+
+// =============================================================
+//  Show and hide the control panel
+// =============================================================
+// The panel floats over the canvas, so this uncovers the drawing rather
+// than resizing it - the canvas is always the full size of the window
+// under the header.
+//
+// Two buttons, not one that moves. The hide button sits in the panel's
+// own corner, so it travels with the panel and is gone the moment the
+// panel is - which is exactly why it cannot also be the way back. The
+// show button lives outside the panel and lands in the same spot, so
+// toggling swaps one for the other without anything appearing to move.
+(function () {
+    const hide = document.getElementById('btn-hide');
+    const show = document.getElementById('btn-show');
+    if (!hide || !show) return;
+
+    function setControls(off) {
+        document.body.classList.toggle('controls-off', off);
+        // A 2D canvas is sized from its box in device pixels, so it has
+        // to be told when that box could have changed. Cheap, and it
+        // keeps the drawing crisp if the layout ever does shift.
+        if (typeof resizeCanvas === 'function') resizeCanvas();
+    }
+    hide.addEventListener('click', () => setControls(true));
+    show.addEventListener('click', () => setControls(false));
+
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const modal = document.getElementById('info-modal');
+        if (modal && !modal.classList.contains('hidden')) return;
+        if (!document.body.classList.contains('controls-off')) setControls(true);
+    });
+})();
