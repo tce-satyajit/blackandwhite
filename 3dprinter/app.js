@@ -504,7 +504,7 @@
           camera = new THREE.PerspectiveCamera(40, 1, 1, 3000);
           // opens on the Spool view: the whole machine, the rack and the four
           // feeds in one shot, which is the picture that explains the thing
-          camera.position.set(266, 301, 627);
+          camera.position.set(347, 278, 951);
 
           renderer = new THREE.WebGLRenderer({ antialias: true });
           renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -522,7 +522,7 @@
           controls.maxDistance = 1100;
           controls.maxPolarAngle = Math.PI / 2 + 0.02;
           controls.autoRotateSpeed = 0.9;            // a slow turntable, not a fairground ride
-          controls.target.set(111, 153, 6);
+          controls.target.set(111, 53, 6);
 
           scene.add(new THREE.AmbientLight(0xffffff, 0.62));
           const key = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -1528,7 +1528,9 @@ diffuseColor.rgb *= mix(0.72, 1.0, band);`);
           front:  { pos: [10, 190, 470],  tgt: [0, 96, 0] },
           top:    { pos: [30, 430, 150],  tgt: [0, 60, 0] },
           part:   { pos: [92, 150, 168],  tgt: [0, 96, 4] },
-          spool:  { pos: [266, 301, 627], tgt: [111, 153, 6] }
+          // Far enough back, and aimed low enough, that the printer and the
+          // spool rack beside it sit above the control panel with it open.
+          spool:  { pos: [347, 278, 951], tgt: [111, 53, 6] }
       };
       let camFrom = null, camTo = null, camT = 1;
       function setView(name) {
