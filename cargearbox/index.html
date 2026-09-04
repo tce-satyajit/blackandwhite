@@ -57,10 +57,6 @@
 
             <!-- Canvas element -->
             <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 flex items-center justify-center overflow-hidden">
-                <button id="btn-show" title="Show the controls" aria-label="Show the controls"
-                        class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
-                    <i class="fa-solid fa-sliders"></i>
-                </button>
                 <canvas id="simCanvas" class="w-full h-full block"></canvas>
 
                 <!-- Overlay column: what is happening, then the teacher working -->
@@ -71,10 +67,6 @@
             </div>
 
             <div id="panel" class="p-2.5 bg-slate-50/90 border-t border-slate-200 flex flex-col gap-2">
-                <button id="btn-hide" title="Hide the controls (Esc)" aria-label="Hide the controls"
-                        class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
-                    <i class="fa-solid fa-chevron-down"></i>
-                </button>
 
                 <!-- Sliders get the full width so their labels never crowd -->
                 <div class="grid grid-cols-3 gap-2.5">

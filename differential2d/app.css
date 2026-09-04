@@ -116,37 +116,11 @@ input[type=range]:focus-visible::-webkit-slider-thumb {
 }
 .sim-note.dark b, .sim-note.dark .hd { color: #f1f5f9; }
 
-/* ---- The controls float over the view ------------------------
-   The view is always the full size of the window under the header. The
-   control panel is not a slice taken out of it - it sits on top, so
-   hiding it uncovers the model rather than resizing the canvas.
-
-   That is worth doing for more than tidiness: the renderer only has to
-   be told about a size change that actually happens, and toggling the
-   panel is no longer one, so it costs nothing but a transform.
-
-   The header stays either way. It is not chrome in the way the panel is
-   - it is the read-out, and those numbers are exactly what you want in
-   front of you while watching the thing work. */
-#panel {
-    position: absolute;
-    left: 10px; right: 10px; bottom: 10px;
-    z-index: 25;
-    background: rgba(248, 250, 252, 0.44);
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
-    border-radius: 15px;
-    /* A card floating clear of the frame needs its own edge, or it reads
-       as a smudge on the glass rather than a panel sitting on top of it. */
-    border: 1px solid rgba(226, 232, 240, 0.7);
-    box-shadow: 0 8px 24px -6px rgba(15, 23, 42, 0.25);
-    transition: transform .22s ease, opacity .18s ease;
-}
-body.controls-off #panel {
-    transform: translateY(calc(100% + 14px));
-    opacity: 0;
-    pointer-events: none;
-}
+/* These four need the panel on screen the whole time - you cannot
+   drive the gearbox or drop the gear with the controls hidden - so the
+   panel stays in the flow below the canvas and the canvas takes what is
+   left, the way it did before. No overlay, and no toggle to hide it.
+   The flattened styling below still applies. */
 
 /* ---- The controls, flattened ---------------------------------
    The panel is already a card floating over the view. Giving every
@@ -204,35 +178,6 @@ body.controls-off #panel {
     border-top-color: transparent !important;
 }
 
-/* ---- The two halves of the toggle ----------------------------
-   One button cannot do this job. The one that hides the panel belongs
-   in the panel's own corner, which means it slides away with the panel
-   and cannot be the way back - so the one that brings it back has to
-   live outside the panel, and only appears once the panel has gone. */
-#btn-hide {
-    position: absolute;
-    bottom: 6px; right: 6px;
-    z-index: 30;
-}
-/* Room in the panel's bottom-right corner so the controls do not run
-   under the button. Both buttons are the same size and sit in the same
-   place on screen, so toggling swaps one for the other without anything
-   appearing to move. */
-#panel { padding-right: 44px; }
-
-#btn-show {
-    position: absolute;
-    right: 14px; bottom: 14px;
-    z-index: 30;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .18s ease;
-}
-body.controls-off #btn-show {
-    opacity: 1;
-    pointer-events: auto;
-}
-
 /* ---- The chips lose their pill -------------------------------
    Each chip already carries a checkbox, and the checkbox already says
    whether it is on. A filled pill behind it says the same thing twice,
@@ -284,12 +229,7 @@ body.controls-off #btn-show {
         flex-shrink: 1 !important;
         min-width: 0 !important;
     }
-    #btn-hide,
-    #btn-show {
-        position: fixed;
-        right: 18px;
-        bottom: 18px;
-    }
+}
 }
 
 /* ---- The read-out --------------------------------------------
