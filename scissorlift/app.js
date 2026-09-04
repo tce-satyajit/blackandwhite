@@ -829,7 +829,7 @@ function init3D() {
     scene.background = new THREE.Color(0x0f172a);
 
     camera = new THREE.PerspectiveCamera(42, 1, 20, 14000);
-    camera.position.set(2900, 2000, 3300);
+    camera.position.set(5216, 2166, 5457);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -844,7 +844,7 @@ function init3D() {
     controls.maxDistance = 9000;
     controls.maxPolarAngle = Math.PI / 2 + 0.02;
     controls.autoRotateSpeed = 0.8;
-    controls.target.set(0, 1150, 0);
+    controls.target.set(420, 760, 0);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.34));
     keyLight = new THREE.DirectionalLight(0xfff6e8, 0.8);
@@ -2096,7 +2096,14 @@ function update3D() {
 const VIEWS = {
     // Far enough back to hold the whole travel, and the load on top of
     // it, without the deck walking out of frame as it rises.
-    whole:   { pos: [2900, 2000, 3300], tgt: [0, 1150, 0] },
+    // Far enough back that the machine clears the control panel in
+    // every state it has - including fully raised with a five-course
+    // crate on it, which is 3.14 m from the floor to the crate lid.
+    // Framing for anything less clips the load at full height.
+    //
+    // Aimed at x=420, not 0: the pose is kept at the rear axle, so the
+    // machine's own centre sits half a wheelbase ahead of the origin.
+    whole:   { pos: [5216, 2166, 5457], tgt: [420, 760, 0] },
     // Where the mechanical advantage lives: the arms, the pins and the
     // angle between them.
     scissor: { pos: [1500, 1150, 1600], tgt: [-40, 720, 60] },
