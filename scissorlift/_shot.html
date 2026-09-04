@@ -346,12 +346,10 @@
 window.addEventListener('load', function () {
   setTimeout(function () {
     var q = new URLSearchParams(location.search);
-    P.load = +(q.get('load') || 600);
-    document.getElementById('s-load').value = P.load;
     if (q.get('th')) state.th = +q.get('th') * Math.PI / 180;
     if (q.get('crate') === '0') state.crate = false;
-    var p = (q.get('cam') || '1450,1350,1500').split(',').map(Number);
-    var t = (q.get('tgt') || '0,1000,0').split(',').map(Number);
+    var p = (q.get('cam') || '900,700,1100').split(',').map(Number);
+    var t = (q.get('tgt') || '400,400,300').split(',').map(Number);
     camera.position.set(p[0], p[1], p[2]);
     controls.target.set(t[0], t[1], t[2]);
     camT = 1;

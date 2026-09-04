@@ -586,8 +586,8 @@ function init3D() {
                                                     emissive: 0x4c1d95, emissiveIntensity: 0.35 });
     MAT.forceW   = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.2, roughness: 0.4,
                                                     emissive: 0x92400e, emissiveIntensity: 0.35 });
-    MAT.beacon   = new THREE.MeshStandardMaterial({ color: 0xb01810, roughness: 0.25, metalness: 0.1,
-                                                    emissive: 0xff2a12, emissiveIntensity: 0.1,
+    MAT.beacon   = new THREE.MeshStandardMaterial({ color: BEACON_RED_LENS, roughness: 0.25, metalness: 0.1,
+                                                    emissive: BEACON_RED, emissiveIntensity: 0.1,
                                                     transparent: true, opacity: 0.92 });
 
     MAT.body.envMapIntensity = 0.85;
@@ -834,8 +834,14 @@ function makeRoller() {
     return g;
 }
 
-// The flashing beacon. Every lift and every crane carries one, and it
-// says one thing only: this machine is about to move, or is moving.
+// The beacon. Every lift and every crane carries one, and this is the
+// kind with a clear lens and a lamp behind it that can be either
+// colour, because it has two things to say and they are opposites:
+// stand clear, and all clear. The lens colour is set every frame in
+// update3D, along with what the lamp is doing.
+const BEACON_RED = 0xff2a12, BEACON_RED_LENS = 0xb01810;
+const BEACON_GREEN = 0x1fd45e, BEACON_GREEN_LENS = 0x0e7a37;
+
 function buildBeacon() {
     const g = new THREE.Group();
     const foot = new THREE.Mesh(new THREE.CylinderGeometry(34, 42, 22, 20), MAT.bodyDark);
@@ -856,8 +862,8 @@ function buildBeacon() {
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(14, 10, 10, 16), MAT.motor);
     cap.position.y = 162;
     g.add(cap);
-    // a real light too, so the flash lands on the machine around it
-    beaconLight = new THREE.PointLight(0xff3018, 0, 1400, 2);
+    // a real light too, so the lamp lands on the machine around it
+    beaconLight = new THREE.PointLight(BEACON_RED, 0, 1400, 2);
     beaconLight.position.y = 126;
     g.add(beaconLight);
 
@@ -1321,16 +1327,33 @@ function update3D() {
         arrowLoad.rotation.z = 0;
     }
 
-    // The beacon: on through the warning and all the while a direction
-    // is being asked for, dark the moment it is not. It follows the
-    // command and not the run-down, so arriving at either stop puts it
-    // out at once rather than leaving it flashing over a machine that
-    // has finished moving.
+    // The beacon says one of three things, and only one at a time.
+    //
+    // Red, flashing twice a second: a direction has been asked for, and
+    // the machine is either sounding its warning or moving. It follows
+    // the command and not the motor run-down, so arriving at a stop
+    // ends it at once rather than leaving it flashing over a machine
+    // that has finished moving.
+    //
+    // Green, steady: fully down or fully up. These are the only two
+    // states in which the deck is resting on something and cannot move
+    // any further that way - nothing is part way through anything, and
+    // it is safe to load, unload or walk up to. A steady lamp, not a
+    // strobe: a strobe is a warning, and there is nothing to warn of.
+    //
+    // Dark: held part way. Not moving, but not resting on anything
+    // either - the load is standing on oil, and that is not a state to
+    // put a green light over.
     if (beaconLamp) {
         const live = state.cmd !== 0 || state.warn > 0;
-        const on = live && Math.sin(performance.now() / 1000 * Math.PI * 4) > 0;
-        beaconLamp.material.emissiveIntensity = on ? 2.4 : 0.08;
-        beaconLight.intensity = on ? 2.2 : 0;
+        const safe = !live && (atStop(1) || atStop(-1));
+        const flash = live && Math.sin(performance.now() / 1000 * Math.PI * 4) > 0;
+        const m = beaconLamp.material;
+        m.color.setHex(safe ? BEACON_GREEN_LENS : BEACON_RED_LENS);
+        m.emissive.setHex(safe ? BEACON_GREEN : BEACON_RED);
+        m.emissiveIntensity = safe ? 1.5 : (flash ? 2.4 : 0.08);
+        beaconLight.color.setHex(safe ? BEACON_GREEN : BEACON_RED);
+        beaconLight.intensity = safe ? 0.9 : (flash ? 2.2 : 0);
     }
 
     controls.update();
