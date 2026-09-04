@@ -188,3 +188,37 @@ body.controls-off #btn-show {
     opacity: 1;
     pointer-events: auto;
 }
+
+/* ---- The read-out --------------------------------------------
+   Five numbers on one row, changing every frame, and two separate
+   things were making the row shuffle sideways as they did.
+
+   The first is that in a proportional face a 1 is narrower than a 0, so
+   the width changes even when the digit count does not. Tabular figures
+   settle that: every digit on the same advance, which is what the
+   feature is for and why every instrument panel uses it.
+
+   The second is that the digit count changes too - 5 becomes 13 becomes
+   132 - and no font feature helps with that. So each field also gets a
+   floor on its width, sized to the widest value it can actually reach,
+   and the number is set against the right so it stays beside its unit
+   and the slack falls after the label instead.
+
+   Addressed by id, not by a shared class: updateStats reassigns
+   className on the torque and hold fields to recolour them on overload,
+   which would wipe a class added here.
+
+   It is a floor, not a fixed width - an unexpected value still gets its
+   room, it just moves the row when it does. */
+#stat-placed, #stat-cycle, #stat-rate, #stat-torque, #stat-hold {
+    display: inline-block;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+#stat-placed { min-width: 3ch; }   /* parts placed, climbs all session */
+#stat-cycle  { min-width: 4ch; }   /* "12.8", or "--" before the first one */
+#stat-rate   { min-width: 3ch; }   /* per minute, or "--" */
+#stat-torque { min-width: 3ch; }   /* N.m at the shoulder */
+#stat-hold   { min-width: 8ch; }   /* "214/1203" - two numbers and a slash,
+                                      and both of them can reach four digits */

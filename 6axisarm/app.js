@@ -109,7 +109,7 @@ const state = {
     fast: false, slow: false,
     axes: false, env: false, trail: true, mesh: false, spin: false,
     sound: true,
-    viewMode: 'light',
+    viewMode: 'blueprint',
     placed: 0, cycle: 0, cycleT: 0,     // finished parts, and how long one takes
     phase: 'idle', phaseT: 0, phaseDur: 0,
     grip: 1,                            // 1 = wide open, 0 = closed on the part
@@ -408,7 +408,14 @@ function init3D() {
     MAT.steel  = new THREE.MeshStandardMaterial({ color: 0xb9bfc9, metalness: 0.62, roughness: 0.24 });
     MAT.pale   = new THREE.MeshStandardMaterial({ color: 0xd3d9e1, metalness: 0.26, roughness: 0.42 });
     MAT.rubber = new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.88 });
-    MAT.paint  = new THREE.MeshStandardMaterial({ color: 0xeab308, roughness: 0.8 });
+    // The floor line is paint on concrete that everything in the cell
+    // walks over, not a decal. Fresh amber reads as a graphic laid on
+    // top of the scene; this is the same paint after a few months of
+    // being trodden on - lighter, greyer, and dusty in the middle where
+    // the traffic is. The texture is mapped per strip in millimetres, so
+    // the wear comes out the same size on the long sides as the short.
+    MAT.paint  = new THREE.MeshStandardMaterial({ map: paintTexture(),
+                                                  roughness: 0.94, metalness: 0.0 });
 
     buildRobot();
     buildCell();
@@ -864,7 +871,15 @@ function buildCell() {
     const mk = [[0, 1460, 3060, 70], [0, -1460, 3060, 70],
                 [1530, 0, 70, 2990], [-1530, 0, 70, 2990]];
     mk.forEach(([mx, mz, mw, md]) => {
-        const strip = new THREE.Mesh(new THREE.BoxGeometry(mw, 3, md), MAT.paint);
+        // Each strip gets the texture at its own scale. Sharing one
+        // material would stretch the dust along the long sides and
+        // squash it on the short ones, and the join at the corners
+        // would show.
+        const m = MAT.paint.clone();
+        m.map = MAT.paint.map.clone();
+        m.map.needsUpdate = true;
+        m.map.repeat.set(mw / PAINT_TILE, md / PAINT_TILE);
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(mw, 3, md), m);
         strip.position.set(mx, 1, mz);
         strip.receiveShadow = true;
         scene.add(strip);
@@ -1669,6 +1684,45 @@ function applyMesh() {
         const ms = Array.isArray(o.material) ? o.material : [o.material];
         ms.forEach(m => { if ('wireframe' in m) m.wireframe = on; });
     });
+}
+
+// One tile of worn floor paint: 400 mm of it, so a strip repeats the
+// wear rather than stretching one copy of it down its whole length.
+const PAINT_TILE = 400;
+function paintTexture() {
+    const S = 256;
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+    // a light golden yellow, not a signal amber
+    g.fillStyle = '#c4a552';
+    g.fillRect(0, 0, S, S);
+
+    // Worn patches, where the paint has been walked off and the grey
+    // of the floor is coming through.
+    for (let i = 0; i < 90; i++) {
+        g.globalAlpha = 0.05 + rnd() * 0.22;
+        g.fillStyle = rnd() < 0.7 ? '#9a8f6d' : '#dccb92';
+        const r = 6 + rnd() * 34;
+        g.beginPath();
+        g.ellipse(rnd() * S, rnd() * S, r, r * (0.4 + rnd() * 0.8), rnd() * 3.14, 0, 6.283);
+        g.fill();
+    }
+    // and the dust that settles on all of it
+    for (let i = 0; i < 2600; i++) {
+        g.globalAlpha = 0.06 + rnd() * 0.26;
+        g.fillStyle = rnd() < 0.5 ? '#b6b0a0' : '#8d846c';
+        g.fillRect(rnd() * S, rnd() * S, 1 + rnd() * 2, 1 + rnd() * 2);
+    }
+    g.globalAlpha = 1;
+
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 8;
+    return t;
 }
 
 function applyTheme() {
