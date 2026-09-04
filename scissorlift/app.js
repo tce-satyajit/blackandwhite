@@ -300,7 +300,7 @@ function badgeTexture() {
     c.width = 368; c.height = 100;
     const g = c.getContext('2d');
     g.fillStyle = '#999999'; g.fillRect(0, 0, 368, 100);
-    g.fillStyle = '#ffffff';
+    g.fillStyle = '#8e6e05';
     g.font = 'bold 58px Inter, sans-serif';
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText('TCE-LAB', 184, 53);
@@ -648,7 +648,7 @@ function init3D() {
     // Whatever is in the crate, seen through the gaps between courses.
     MAT.goods    = new THREE.MeshStandardMaterial({ color: 0x4d5560, metalness: 0.08, roughness: 0.58 });
     // Steel strapping: thin, bright and pulled tight.
-    MAT.band     = new THREE.MeshStandardMaterial({ color: 0xc3cad2, metalness: 0.92, roughness: 0.26 });
+    MAT.band     = new THREE.MeshStandardMaterial({ color: 0x6f7885, metalness: 0.88, roughness: 0.38 });
     MAT.mark     = new THREE.MeshStandardMaterial({ map: markTexture(), transparent: true,
                                                     alphaTest: 0.1, metalness: 0, roughness: 0.9 });
     // Hazard striping only works as a pair. On a yellow machine the
@@ -683,7 +683,7 @@ function init3D() {
     MAT.block.envMapIntensity = 0.25;
     MAT.hazard.envMapIntensity = 0.7;
     MAT.goods.envMapIntensity = 0.4;
-    MAT.band.envMapIntensity = 1.6;
+    MAT.band.envMapIntensity = 0.9;
 
     buildLift();
 }
