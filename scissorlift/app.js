@@ -123,7 +123,7 @@ const heightM = () => (deckY() + DECK_T) / 1000;
 // old 50 mm of ground clearance was less than a kerb: a machine that
 // has to be pushed across a yard has to be able to get over what is
 // lying in it, and that is what the clearance is for.
-const WHEEL_R = 135;
+const WHEEL_R = 118;
 const BASE_Y0 = 118;                  // the chassis underside, clear of the ground
 const BASE_H = 190;
 const PIVOT_Y = BASE_Y0 + BASE_H;     // the line the scissor is pinned on
@@ -136,18 +136,24 @@ const RAM_Z = 150;
 const ARM_W = 96, ARM_T = 26;         // the flat bar an arm is cut from
 
 // ---- how the wheels are hung ------------------------------------
-// Not on a stub axle straight into the chassis side: that is a mounting
-// that can never do anything but roll straight, and a machine you have
-// to push into position has to be able to point somewhere.
+// Inside the body, in an arch, the way a car carries a wheel - not
+// hung off the side of it on a bracket. Two things follow from that
+// and neither is a free choice.
 //
-// So the front pair hang off a king pin - a vertical pivot bolted to
-// the chassis, just outboard of it - on a swing arm that carries the
-// hub. Everything from the king pin outwards turns; everything inboard
-// of it does not. The wheel has to sit far enough out that the tyre
-// clears the pivot boss as it swings, which is what sets WHEEL_Z.
-const WHEEL_W = 92;                   // across the tread
-const KING_Z = BASE_Z + 18;           // the king pin the arm swings about
-const WHEEL_Z = BASE_Z + 110;         // the wheel's own centre plane
+// The first is that the chassis side has to have the arch cut out of
+// it, because the wheel is taller than the ground clearance and has to
+// go somewhere.
+//
+// The second is where the wheel sits across the machine. Flush: the
+// tyre's outer wall stops 6 mm inside the body's, so the wheel fills
+// its arch instead of hiding at the back of it. That is a choice with
+// a consequence - the wheel turns about its own vertical centre line,
+// so at lock it sweeps a wider band than it stands in, and the tyre
+// comes proud of the body. Every steered wheel in an arch does this;
+// it is why the arch is cut wider than the tyre.
+const WHEEL_W = 78;                   // across the tread
+const WHEEL_Z = BASE_Z - 45;          // the wheel's own centre plane
+const ARCH_R = 136;                   // the arch cut out of the chassis side
 const TREAD_N = 22;                   // lugs round the tyre
 // The roller at the sliding end of each stage, and so how far below the
 // pivot line the rail it runs on has to sit.
@@ -249,6 +255,247 @@ function pin(x, y, z, r, len, mat) {
     });
     g.position.set(x, y, z);
     return g;
+}
+
+// =============================================================
+//  Safety decals
+// =============================================================
+// The stickers a machine like this carries, and it carries them for a
+// reason: a scissor lift is a pair of shears with a tonne on top of it,
+// and everything below is somewhere a hand can go. Nothing here is
+// decoration - each one names a way this particular machine can hurt
+// someone, which is why there is no fall-arrest or overhead-line decal
+// on it: nobody rides this one, and it does not reach a power line.
+//
+// Drawn rather than fetched, so they stay sharp at any zoom and the page
+// still runs with no files but its own.
+const DECAL_YEL = '#f0c419', DECAL_INK = '#17191c', DECAL_RED = '#c22a20';
+const decalTex = {}, decalMat = {};
+
+// Every warning decal is the same panel: hazard yellow, a black keyline,
+// and two squares - the triangle that says "danger" and the picture that
+// says which one.
+function decalPanel() {
+    const W = 320, H = 160;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.fillStyle = DECAL_YEL;
+    g.fillRect(0, 0, W, H);
+    g.strokeStyle = DECAL_INK;
+    g.lineWidth = 7;
+    g.strokeRect(3.5, 3.5, W - 7, H - 7);
+    g.beginPath(); g.moveTo(W / 2, 7); g.lineTo(W / 2, H - 7); g.stroke();
+    g.lineJoin = g.lineCap = 'round';
+    return { c: c, g: g, W: W, H: H };
+}
+
+// The triangle. Rounded corners come free from the line join, which is
+// how they are actually printed anyway.
+function warnTri(g, cx, cy, s) {
+    const h = s * 0.9;
+    g.strokeStyle = DECAL_INK;
+    g.lineWidth = s * 0.11;
+    g.beginPath();
+    g.moveTo(cx, cy - h / 2);
+    g.lineTo(cx + s / 2, cy + h / 2);
+    g.lineTo(cx - s / 2, cy + h / 2);
+    g.closePath();
+    g.stroke();
+}
+
+function bangGlyph(g, cx, cy, s) {
+    g.fillStyle = DECAL_INK;
+    g.beginPath();
+    g.moveTo(cx - s * 0.055, cy - s * 0.16);
+    g.lineTo(cx + s * 0.055, cy - s * 0.16);
+    g.lineTo(cx + s * 0.03, cy + s * 0.1);
+    g.lineTo(cx - s * 0.03, cy + s * 0.1);
+    g.closePath(); g.fill();
+    g.beginPath(); g.arc(cx, cy + s * 0.2, s * 0.055, 0, Math.PI * 2); g.fill();
+}
+
+// A hand caught where two arms cross - which is the one thing this
+// machine does that a pallet truck does not.
+function crushGlyph(g, cx, cy, s) {
+    g.strokeStyle = DECAL_INK;
+    g.lineWidth = s * 0.11;
+    g.beginPath();
+    g.moveTo(cx - s * 0.42, cy - s * 0.4); g.lineTo(cx + s * 0.42, cy + s * 0.4);
+    g.moveTo(cx - s * 0.42, cy + s * 0.4); g.lineTo(cx + s * 0.42, cy - s * 0.4);
+    g.stroke();
+    g.fillStyle = DECAL_YEL;
+    g.beginPath(); g.ellipse(cx, cy, s * 0.26, s * 0.22, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = DECAL_INK;
+    g.beginPath(); g.ellipse(cx, cy + s * 0.06, s * 0.15, s * 0.11, 0, 0, Math.PI * 2); g.fill();
+    g.lineWidth = s * 0.05;
+    for (let i = -1; i <= 1; i++) {
+        g.beginPath();
+        g.moveTo(cx + i * s * 0.08, cy);
+        g.lineTo(cx + i * s * 0.11, cy - s * 0.19);
+        g.stroke();
+    }
+}
+
+// Read the book before you touch it.
+function bookGlyph(g, cx, cy, s) {
+    g.strokeStyle = DECAL_INK;
+    g.lineWidth = s * 0.075;
+    g.beginPath();
+    g.moveTo(cx, cy - s * 0.26);
+    g.quadraticCurveTo(cx - s * 0.2, cy - s * 0.38, cx - s * 0.44, cy - s * 0.28);
+    g.lineTo(cx - s * 0.44, cy + s * 0.28);
+    g.quadraticCurveTo(cx - s * 0.2, cy + s * 0.18, cx, cy + s * 0.3);
+    g.quadraticCurveTo(cx + s * 0.2, cy + s * 0.18, cx + s * 0.44, cy + s * 0.28);
+    g.lineTo(cx + s * 0.44, cy - s * 0.28);
+    g.quadraticCurveTo(cx + s * 0.2, cy - s * 0.38, cx, cy - s * 0.26);
+    g.stroke();
+    g.beginPath(); g.moveTo(cx, cy - s * 0.26); g.lineTo(cx, cy + s * 0.3); g.stroke();
+}
+
+// Oil at 250 bar goes through skin without breaking it, which is why
+// this decal exists and why nobody checks a hydraulic leak by hand.
+function fluidGlyph(g, cx, cy, s) {
+    g.fillStyle = DECAL_INK;
+    g.fillRect(cx - s * 0.46, cy - s * 0.08, s * 0.22, s * 0.16);
+    g.strokeStyle = DECAL_INK;
+    g.lineWidth = s * 0.055;
+    for (let i = -1; i <= 1; i++) {
+        g.beginPath();
+        g.moveTo(cx - s * 0.22, cy);
+        g.lineTo(cx + s * 0.06, cy + i * s * 0.13);
+        g.stroke();
+    }
+    g.lineWidth = s * 0.08;
+    g.beginPath();
+    g.arc(cx + s * 0.28, cy, s * 0.22, -Math.PI * 0.62, Math.PI * 0.62);
+    g.stroke();
+}
+
+function personGlyph(g, cx, cy, s) {
+    g.fillStyle = DECAL_INK;
+    g.beginPath(); g.arc(cx, cy - s * 0.28, s * 0.1, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = DECAL_INK;
+    g.lineWidth = s * 0.085;
+    g.beginPath();
+    g.moveTo(cx, cy - s * 0.17); g.lineTo(cx, cy + s * 0.06);
+    g.moveTo(cx - s * 0.15, cy - s * 0.05); g.lineTo(cx + s * 0.15, cy - s * 0.05);
+    g.moveTo(cx, cy + s * 0.06); g.lineTo(cx - s * 0.13, cy + s * 0.34);
+    g.moveTo(cx, cy + s * 0.06); g.lineTo(cx + s * 0.13, cy + s * 0.34);
+    g.stroke();
+}
+
+function banGlyph(g, cx, cy, s) {
+    g.strokeStyle = DECAL_RED;
+    g.lineWidth = s * 0.1;
+    g.beginPath(); g.arc(cx, cy, s * 0.45, 0, Math.PI * 2); g.stroke();
+    g.beginPath();
+    g.moveTo(cx - s * 0.32, cy + s * 0.32);
+    g.lineTo(cx + s * 0.32, cy - s * 0.32);
+    g.stroke();
+}
+
+// The data plate. Not yellow and not a warning: it is the one decal that
+// states what the machine is rated at, so it is a metal plate and reads
+// like one. Every number on it is a constant from the top of this file,
+// so it cannot drift away from what the machine actually does.
+function capacityCanvas() {
+    const W = 320, H = 160;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.fillStyle = '#c9ccd1'; g.fillRect(0, 0, W, H);
+    g.strokeStyle = '#3b3f45'; g.lineWidth = 5;
+    g.strokeRect(9, 9, W - 18, H - 18);
+    g.fillStyle = '#1b1e22';
+    g.textBaseline = 'middle';
+    g.font = 'bold 27px Inter, Helvetica, Arial, sans-serif';
+    g.fillText('RATED LOAD', 26, 42);
+    g.font = 'bold 34px Inter, Helvetica, Arial, sans-serif';
+    g.textAlign = 'right';
+    g.fillText('2000 kg', W - 26, 42);
+    g.textAlign = 'left';
+    g.font = '23px Inter, Helvetica, Arial, sans-serif';
+    g.fillText('MAX HEIGHT', 26, 84);
+    g.fillText('SYSTEM', 26, 118);
+    g.textAlign = 'right';
+    g.fillText('1.80 m', W - 26, 84);
+    g.fillText(DEFAULTS.relief + ' bar', W - 26, 118);
+    return c;
+}
+
+function decalTexture(kind) {
+    if (decalTex[kind]) return decalTex[kind];
+    let c;
+    if (kind === 'capacity') {
+        c = capacityCanvas();
+    } else {
+        const p = decalPanel();
+        const g = p.g, L = 80, R = 240, cy = 80;
+        if (kind === 'crush') {
+            warnTri(g, L, cy, 104); crushGlyph(g, L, cy + 16, 46);
+            crushGlyph(g, R, cy, 112);
+        } else if (kind === 'manual') {
+            warnTri(g, L, cy, 104); bangGlyph(g, L, cy + 14, 74);
+            bookGlyph(g, R, cy, 118);
+        } else if (kind === 'fluid') {
+            warnTri(g, L, cy, 104); bangGlyph(g, L, cy + 14, 74);
+            fluidGlyph(g, R, cy, 118);
+        } else if (kind === 'noride') {
+            warnTri(g, L, cy, 104); personGlyph(g, L, cy + 14, 62);
+            personGlyph(g, R, cy, 118); banGlyph(g, R, cy, 118);
+        }
+        c = p.c;
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.anisotropy = 8;
+    decalTex[kind] = t;
+    return t;
+}
+
+function decalMaterial(kind) {
+    if (!decalMat[kind]) {
+        decalMat[kind] = new THREE.MeshStandardMaterial({
+            map: decalTexture(kind), metalness: 0.05, roughness: 0.52
+        });
+        decalMat[kind].envMapIntensity = 0.3;
+    }
+    return decalMat[kind];
+}
+
+// One sticker. Placed 1.5 mm proud of whatever it is stuck to, because
+// a decal in exactly the same plane as the panel under it is the depth
+// buffer's problem, not a decal.
+function decal(kind, w, pos, rotY) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 2), decalMaterial(kind));
+    m.position.set(pos[0], pos[1], pos[2]);
+    m.rotation.y = rotY || 0;
+    return m;
+}
+
+// Where they go. On the sides you walk past, on the ends you walk up to,
+// and on the deck skirt at eye level for anyone loading it.
+function buildDecals() {
+    const yMid = BASE_Y0 + BASE_H / 2;
+    // Every one of these is boxed in by something. On the side, the
+    // rubbing strip below and the top edge above, and the two wheel
+    // arches left and right - which leaves the flat band in the middle
+    // and nothing else. On the front, whatever the maker's plate is not
+    // already using. On the deck skirt, 64 mm of height, so the decal is
+    // sized to it rather than the other way round.
+    [-1, 1].forEach(s => {
+        liftGrp.add(decal('crush', 196, [-140, yMid + 22, s * 432], s > 0 ? 0 : Math.PI));
+        liftGrp.add(decal('manual', 196, [140, yMid + 22, s * 432], s > 0 ? 0 : Math.PI));
+        // and on the deck skirt, which is the edge that comes down onto
+        // the base with whatever is standing on it
+        deckGrp.add(decal('crush', 116, [s * 330, 34, DECK_Z + 2], 0));
+        deckGrp.add(decal('crush', 116, [s * 330, 34, -(DECK_Z + 2)], Math.PI));
+    });
+    // The front end: what it is rated at, and what the oil in it will do.
+    liftGrp.add(decal('capacity', 200, [BASE_X + 1, yMid + 12, -290], Math.PI / 2));
+    liftGrp.add(decal('fluid', 190, [BASE_X + 1, yMid + 12, 290], Math.PI / 2));
+    // and the back end, which is the end you push it by
+    liftGrp.add(decal('crush', 210, [-BASE_X - 1, yMid + 12, 0], -Math.PI / 2));
 }
 
 // Hazard striping. Drawn as a tile rather than laid out as a row of
@@ -738,7 +985,7 @@ function buildGroundShade() {
     }
     const tex = new THREE.CanvasTexture(c);
     const m = new THREE.Mesh(
-        new THREE.PlaneGeometry(BASE_X * 2.45, (BASE_Z + 40) * 2.35),
+        new THREE.PlaneGeometry(BASE_X * 2.4, BASE_Z * 2.4),
         new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
     m.rotation.x = -Math.PI / 2;
     m.position.y = 2;                  // clear of the floor, under everything else
@@ -757,8 +1004,37 @@ function buildLift() {
     buildScissor();
     buildRams();
     buildDeck();
+    buildDecals();
     buildLoad();
     buildArrows();
+}
+
+// The side of the chassis: a plate with a wheel arch cut out of the
+// bottom edge at each axle. Walked as one outline - along the bottom,
+// up and over each arch, then round the outside - so it comes out as
+// one welded plate rather than three panels that happen to line up.
+//
+// The arch is drawn from the bottom edge, so its radius is also how far
+// up the side it reaches. 136 leaves 54 mm of plate above the tyre,
+// which is the band you see over a wheel on anything with bodywork.
+function sideWallGeometry() {
+    const d = 34;
+    const s = new THREE.Shape();
+    s.moveTo(-BASE_X, 0);
+    s.lineTo(-WHEEL_X - ARCH_R, 0);
+    s.absarc(-WHEEL_X, 0, ARCH_R, Math.PI, 0, true);
+    s.lineTo(WHEEL_X - ARCH_R, 0);
+    s.absarc(WHEEL_X, 0, ARCH_R, Math.PI, 0, true);
+    s.lineTo(BASE_X, 0);
+    s.lineTo(BASE_X, BASE_H);
+    s.lineTo(-BASE_X, BASE_H);
+    s.closePath();
+    const g = new THREE.ExtrudeGeometry(s, {
+        depth: d, bevelEnabled: true, bevelSize: 1.2,
+        bevelThickness: 1.2, bevelSegments: 2, curveSegments: 18
+    });
+    g.translate(0, 0, -d / 2);
+    return g;
 }
 
 // The chassis. A welded box, open only at the top - which is how a real
@@ -768,20 +1044,27 @@ function buildBase() {
     const g = new THREE.Group();
     const yMid = BASE_Y0 + BASE_H / 2;
 
-    const floorPan = new THREE.Mesh(roundedBox(BASE_X * 2, 26, BASE_Z * 2, 10), MAT.body);
+    // The floor runs between the wheels, not over them: the wheels come
+    // up through where a full-width pan would be, which is exactly why a
+    // real chassis is a pair of side rails with a floor let in between.
+    const floorPan = new THREE.Mesh(
+        roundedBox(BASE_X * 2, 26, (WHEEL_Z - WHEEL_W / 2 - 40) * 2, 10), MAT.body);
     floorPan.position.set(0, BASE_Y0 + 13, 0);
     floorPan.castShadow = floorPan.receiveShadow = true;
     g.add(floorPan);
 
     [-1, 1].forEach(s2 => {
-        const side = new THREE.Mesh(roundedBox(BASE_X * 2, BASE_H, 34, 10), MAT.body);
-        side.position.set(0, yMid, s2 * (BASE_Z - 17));
+        const side = new THREE.Mesh(sideWallGeometry(), MAT.body);
+        side.position.set(0, BASE_Y0, s2 * (BASE_Z - 17));
         side.castShadow = side.receiveShadow = true;
         g.add(side);
 
-        // a rubbing strip along the bottom, which is what actually meets
-        // the pallet, the kerb and everything else it gets pushed into
-        const bump = new THREE.Mesh(roundedBox(BASE_X * 2 + 30, 34, 26, 8), MAT.bodyDark);
+        // The rubbing strip along the bottom - what actually meets the
+        // pallet, the kerb and everything else the machine gets pushed
+        // into. It runs between the arches and stops at them, because
+        // there is no bottom edge to run along across a wheel.
+        const bump = new THREE.Mesh(
+            roundedBox((WHEEL_X - ARCH_R) * 2, 34, 26, 8), MAT.bodyDark);
         bump.position.set(0, BASE_Y0 + 18, s2 * (BASE_Z + 10));
         bump.castShadow = true;
         g.add(bump);
@@ -887,37 +1170,23 @@ function makeWheel(g) {
 
 function buildWheels() {
     [-1, 1].forEach(sx => [-1, 1].forEach(sz => {
-        // What is bolted to the chassis and stays put: a bracket off the
-        // side, and the king-pin boss it carries.
-        const bracket = new THREE.Mesh(roundedBox(150, 96, 60, 10), MAT.body);
-        bracket.position.set(sx * WHEEL_X, WHEEL_R + 14, sz * (BASE_Z + 4));
-        bracket.castShadow = true;
-        liftGrp.add(bracket);
-        const boss = new THREE.Mesh(new THREE.CylinderGeometry(30, 30, 132, 20), MAT.bodyDark);
-        boss.position.set(sx * WHEEL_X, WHEEL_R + 14, sz * KING_Z);
-        boss.castShadow = true;
-        liftGrp.add(boss);
-
-        // And what swings: everything from the king pin outwards. The
-        // arm is a child of nothing but this pivot, so turning the group
-        // turns the hub, the wheel and the tread together, exactly the
-        // way a knuckle does.
+        // The wheel turns about its own vertical centre line, which is
+        // what a car does and why a car's wheel stays in its arch
+        // instead of swinging out of it. Rotating this group is the
+        // whole of the steering: the tyre, the tread, the rim and the
+        // carrier behind it all go round together.
         const arm = new THREE.Group();
-        arm.position.set(sx * WHEEL_X, WHEEL_R, sz * KING_Z);
+        arm.position.set(sx * WHEEL_X, WHEEL_R, sz * WHEEL_Z);
+        makeWheel(arm);
 
-        const kingPin = new THREE.Mesh(new THREE.CylinderGeometry(17, 17, 168, 16), MAT.steel);
-        kingPin.position.y = 14;
-        arm.add(kingPin);
-        const reach = WHEEL_Z - KING_Z;
-        const yoke = new THREE.Mesh(roundedBox(104, 86, reach, 12), MAT.bodyDark);
-        yoke.position.z = sz * reach / 2;
+        // The carrier the hub runs on, tucked inboard behind the wheel
+        // where it is on a real machine - there is no bracket on the
+        // outside of the body, because on the outside of the body there
+        // is nothing but body.
+        const yoke = new THREE.Mesh(roundedBox(84, 92, 32, 10), MAT.bodyDark);
+        yoke.position.z = -sz * (WHEEL_W / 2 + 16);
         yoke.castShadow = true;
         arm.add(yoke);
-
-        const hub = new THREE.Group();
-        hub.position.z = sz * reach;
-        makeWheel(hub);
-        arm.add(hub);
 
         // Only the front pair steer, which is how these are built: the
         // back pair are there to be pushed, not aimed.
@@ -1041,6 +1310,31 @@ function makeRoller() {
 // update3D, along with what the lamp is doing.
 const BEACON_RED = 0xff2a12, BEACON_RED_LENS = 0xb01810;
 const BEACON_GREEN = 0x1fd45e, BEACON_GREEN_LENS = 0x0e7a37;
+const COL_RED = new THREE.Color(BEACON_RED), COL_GRN = new THREE.Color(BEACON_GREEN);
+const COL_RED_LENS = new THREE.Color(BEACON_RED_LENS);
+const COL_GRN_LENS = new THREE.Color(BEACON_GREEN_LENS);
+
+// How much of each thing the lamp is saying, right now. Both are eased,
+// so red dies away as green comes up rather than one replacing the
+// other: arriving at a stop is the end of a movement, not an event, and
+// a lamp that jumps the instant the deck touches down puts the eye on
+// the wrong moment. While they cross, the lens passes through amber.
+const BEACON_HZ = 1.15;              // flashes a second
+const BEACON_FADE = 0.42;            // seconds to hand over between them
+let beaconRed = 0, beaconGrn = 0, beaconPhase = 0;
+
+function advanceBeacon(real) {
+    const live = state.cmd !== 0 || state.warn > 0;
+    const safe = !live && (atStop(1) || atStop(-1));
+    const k = Math.min(1, real / BEACON_FADE);
+    beaconRed += ((live ? 1 : 0) - beaconRed) * k;
+    beaconGrn += ((safe ? 1 : 0) - beaconGrn) * k;
+    if (beaconRed < 0.001) beaconRed = 0;
+    if (beaconGrn < 0.001) beaconGrn = 0;
+    // Kept as an accumulated phase rather than read off the clock, so a
+    // tab that has been asleep does not come back mid-flash.
+    beaconPhase = (beaconPhase + real * BEACON_HZ * Math.PI * 2) % (Math.PI * 2);
+}
 
 function buildBeacon() {
     const g = new THREE.Group();
@@ -1545,11 +1839,10 @@ function update3D() {
 
     // The beacon says one of three things, and only one at a time.
     //
-    // Red, flashing twice a second: a direction has been asked for, and
-    // the machine is either sounding its warning or moving. It follows
-    // the command and not the motor run-down, so arriving at a stop
-    // ends it at once rather than leaving it flashing over a machine
-    // that has finished moving.
+    // Red, pulsing: a direction has been asked for, and the machine is
+    // either sounding its warning or moving. It follows the command and
+    // not the motor run-down, so arriving at a stop ends it rather than
+    // leaving it flashing over a machine that has finished moving.
     //
     // Green, steady: fully down or fully up. These are the only two
     // states in which the deck is resting on something and cannot move
@@ -1560,21 +1853,33 @@ function update3D() {
     // Dark: held part way. Not moving, but not resting on anything
     // either - the load is standing on oil, and that is not a state to
     // put a green light over.
+    // Nothing about the lamp snaps. What it is saying is decided above;
+    // how much of each thing it is saying, and how bright, is eased in
+    // advanceBeacon, and this only reads the result off.
     if (beaconLamp) {
-        const live = state.cmd !== 0 || state.warn > 0;
-        const safe = !live && (atStop(1) || atStop(-1));
-        const flash = live && Math.sin(performance.now() / 1000 * Math.PI * 4) > 0;
+        // A real beacon is a lamp behind a turning mirror, so what
+        // reaches you as it comes round is a pulse that rises, peaks and
+        // falls. Cubing a half sine is that shape near enough, and it is
+        // the difference between a beacon and a checkbox being ticked.
+        const pulse = Math.pow(Math.max(0, Math.sin(beaconPhase)), 3);
+        const red = beaconRed * (0.04 + 0.96 * pulse);
+        const grn = beaconGrn;                       // green does not pulse
+        const tot = red + grn;
+        // Which colour the lens is, is just which of the two is winning.
+        // Mid-change they are both partly on and it passes through amber
+        // on its own, which is what a two-colour lamp really does.
+        const mix = tot > 1e-4 ? grn / tot : 0;
         const m = beaconLamp.material;
-        m.color.setHex(safe ? BEACON_GREEN_LENS : BEACON_RED_LENS);
-        m.emissive.setHex(safe ? BEACON_GREEN : BEACON_RED);
-        m.emissiveIntensity = safe ? 1.5 : (flash ? 2.4 : 0.08);
-        beaconLight.color.setHex(safe ? BEACON_GREEN : BEACON_RED);
+        m.color.copy(COL_RED_LENS).lerp(COL_GRN_LENS, mix);
+        m.emissive.copy(COL_RED).lerp(COL_GRN, mix);
+        m.emissiveIntensity = 0.08 + 2.5 * red + 1.45 * grn;
+        beaconLight.color.copy(COL_RED).lerp(COL_GRN, mix);
         // The red flash can afford to throw itself over the machine
         // because it is gone again half a second later. The green is on
         // the whole time the lift is parked, and a machine permanently
         // washed green reads as a fault rather than as calm - so the
         // lens is bright and what it spills is barely there.
-        beaconLight.intensity = safe ? 0.22 : (flash ? 2.2 : 0);
+        beaconLight.intensity = 2.2 * red + 0.22 * grn;
     }
 
     controls.update();
@@ -1590,7 +1895,7 @@ const VIEWS = {
     scissor: { pos: [1500, 1150, 1600], tgt: [-40, 720, 60] },
     ram:     { pos: [520, 640, 900],    tgt: [-20, 490, 150] },
     pack:    { pos: [-620, 520, 880],   tgt: [-160, 250, 0] },
-    wheel:   { pos: [1000, 470, 1120],  tgt: [420, 150, 470] },
+    wheel:   { pos: [900, 400, 1180],   tgt: [420, 130, 300] },
     deck:    { pos: [1600, 2500, 2000], tgt: [0, 1700, 0] }
 };
 let camFrom = null, camTo = null, camT = 1;
@@ -1757,6 +2062,7 @@ let acc = 0, last = performance.now();
 function frame(now) {
     const real = Math.min((now - last) / 1000, 0.05); last = now;
     advanceCamera(real);
+    advanceBeacon(real);
     acc += real;
     let guard = 0;
     while (acc >= DT && guard++ < 400) { step(DT); acc -= DT; }
