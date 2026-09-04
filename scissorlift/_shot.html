@@ -365,5 +365,20 @@
             else addEventListener('load', check);
         })();
     </script>
+<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    P.load = 2000; P.offset = 600;
+    document.getElementById('s-load').value = 2000;
+    document.getElementById('v-load').textContent = 2000;
+    document.getElementById('s-offset').value = 600;
+    document.getElementById('v-offset').textContent = 600;
+    state.th = 30 * Math.PI / 180; state.tip = 1; state.tipRate = 0;
+    camera.position.set(1750, 1300, 2150);
+    controls.target.set(150, 700, 0);
+    camT = 1;
+  }, 500);
+});
+</script>
 </body>
 </html>

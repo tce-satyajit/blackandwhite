@@ -50,6 +50,7 @@ const state = {
     // point a steered vehicle actually pivots about - the rear wheels do
     // not slip sideways, so the rear axle only ever moves along the
     // heading. The centre is worked out from it when it is time to draw.
+    tip: 0, tipRate: 0,                // how far over it has gone, and how fast
     drive: 0,                          // -1 reverse, 0 stopped, +1 forward
     rx: 0, rz: 0, yaw: 0,              // rear axle, in world millimetres
     vel: 0,                            // mm/s, eased - a machine has mass
@@ -217,7 +218,7 @@ const loadH = () => PAL_H + crateH();        // pallet foot to crate lid
 const loadShown = () => state.crate && P.load > 0;
 
 let scene, camera, renderer, controls;
-let floor3, grid3, liftGrp, keyLight = null;
+let floor3, grid3, liftGrp, keyLight = null, shadeGrp = null;
 let armsL = [], armsU = [], deckGrp, crateGrp;
 // The front pair of swing arms. Only these turn; the back pair are
 // fixed, which is what makes the machine track straight when pushed.
@@ -1021,7 +1022,13 @@ function buildGroundShade() {
     m.rotation.x = -Math.PI / 2;
     m.position.y = 2;                  // clear of the floor, under everything else
     m.renderOrder = 1;
-    liftGrp.add(m);
+    // Not a child of the machine. It is a mark on the floor, and when
+    // the machine leans the mark does not lean with it - it sits in its
+    // own group so it can be given the machine's place and heading
+    // without being given its tilt.
+    shadeGrp = new THREE.Group();
+    shadeGrp.add(m);
+    scene.add(shadeGrp);
 }
 
 function buildLift() {
@@ -1366,7 +1373,8 @@ function advanceBeacon(real) {
     // beacon is for, and it is the state a person walking past is most
     // likely to be caught out by.
     const live = state.cmd !== 0 || state.warn > 0 ||
-                 state.drive !== 0 || Math.abs(state.vel) > 1;
+                 state.drive !== 0 || Math.abs(state.vel) > 1 ||
+                 state.tip > 0.01;
     const safe = !live && (atStop(1) || atStop(-1));
     const k = Math.min(1, real / BEACON_FADE);
     beaconRed += ((live ? 1 : 0) - beaconRed) * k;
@@ -1785,6 +1793,71 @@ function setArms(list, yBase, midX, h, th) {
 //     of the linkage are children of liftGrp and come along for free.
 let lastCx = null, lastCz = null;
 
+// How far over it is leaning, and about what.
+//
+// Below the tipping point this is tyre squash: the wheels on the loaded
+// side carry more and sink into themselves, and that lean is the only
+// warning a real machine gives before it goes. It turns about the far
+// wheels, because the far wheels are still on the ground.
+//
+// Past the tipping point there is no restoring moment left. The far
+// wheels come up and it turns about the near ones instead, and the
+// pivot slides from one wheel line to the other across the threshold
+// rather than jumping between them.
+//
+// It stops at eleven degrees, which is a lie - a real one keeps going -
+// but a machine lying on its side teaches nothing that a machine
+// visibly past the point of no return has not already taught.
+// The tilt interlock. Every elevating platform has one, and what it
+// watches is the chassis being out of level - not where the load is,
+// because no machine can see where the load is. Past the limit it will
+// not elevate. It will still come down: refusing to lower a machine
+// that is already out of level would strand it up there, which is worse
+// than the tilt.
+const TILT_LIMIT = 3 * Math.PI / 180;
+const outOfLevel = () => Math.abs(tiltAngle()) > TILT_LIMIT;
+
+const TILT_SQUASH = 0.9 * Math.PI / 180;
+const TILT_MAX = 18 * Math.PI / 180;
+
+function tiltAngle() {
+    const u = cgX() / WHEEL_X;          // 1 is exactly over the wheel line
+    const s = u < 0 ? -1 : 1, a = Math.abs(u);
+    const squash = TILT_SQUASH * Math.min(1, a) * Math.min(1, a);
+    // Negative about z drops the +x end, so the machine leans the way
+    // the load is hanging out.
+    return -s * (squash + (TILT_MAX - squash) * ease(state.tip));
+}
+
+function tiltPivot() {
+    const u = cgX() / WHEEL_X;
+    const s = u < 0 ? -1 : 1, a = Math.abs(u);
+    const k = Math.max(clamp((a - 0.85) / 0.3, 0, 1), clamp(state.tip * 4, 0, 1));
+    return s * WHEEL_X * (2 * k - 1);
+}
+
+// Going over is not a position, it is an event.
+//
+// Up to the tipping point the machine has a restoring moment and settles
+// somewhere. Past it there is none: the centre of gravity is outside the
+// wheel it would turn about, so every degree it rotates moves the weight
+// further out and the moment that is turning it over gets larger. There
+// is no angle at which that balances, which is why a lift that starts to
+// go, goes.
+//
+// So this is not a function of how far past the point it is - one
+// millimetre past is enough. It is a function of how long it has been
+// past it, accelerating the way anything falling accelerates. Take the
+// load back in and it comes back down, which is the one part a real one
+// will not do for you.
+function stepTip(dt) {
+    if (tipping()) state.tipRate = Math.min(2.4, state.tipRate + 2.6 * dt);
+    else           state.tipRate = Math.max(-1.8, state.tipRate - 3.6 * dt);
+    state.tip = clamp(state.tip + state.tipRate * dt, 0, 1);
+    if ((state.tip <= 0 && state.tipRate < 0) ||
+        (state.tip >= 1 && state.tipRate > 0)) state.tipRate = 0;
+}
+
 function machineCentre() {
     return {
         x: state.rx + (WHEELBASE / 2) * Math.cos(state.yaw),
@@ -1792,10 +1865,33 @@ function machineCentre() {
     };
 }
 
+const _mA = new THREE.Matrix4(), _mB = new THREE.Matrix4();
+
 function placeMachine() {
     const c = machineCentre();
-    liftGrp.position.set(c.x, 0, c.z);
-    liftGrp.rotation.y = state.yaw;
+    // Where it stands, which way it points, and how far it is leaning -
+    // in that order, because the lean is about a wheel line of its own
+    // and has to happen in the machine's frame, not the world's.
+    //
+    //   T(place) . Ry(heading) . T(pivot) . Rz(lean) . T(-pivot)
+    //
+    // Built by hand rather than left to position/rotation, because a
+    // rotation about a point that is not the origin is not something an
+    // Object3D can express on its own.
+    const px = tiltPivot(), lean = tiltAngle();
+    _mA.makeTranslation(c.x, 0, c.z);
+    _mB.makeRotationY(state.yaw);   _mA.multiply(_mB);
+    _mB.makeTranslation(px, 0, 0);  _mA.multiply(_mB);
+    _mB.makeRotationZ(lean);        _mA.multiply(_mB);
+    _mB.makeTranslation(-px, 0, 0); _mA.multiply(_mB);
+    liftGrp.matrixAutoUpdate = false;
+    liftGrp.matrix.copy(_mA);
+    liftGrp.matrixWorldNeedsUpdate = true;
+
+    if (shadeGrp) {
+        shadeGrp.position.set(c.x, 0, c.z);
+        shadeGrp.rotation.y = state.yaw;
+    }
 
     if (lastCx !== null) {
         // Move the camera by exactly what the machine moved, so the
@@ -2076,6 +2172,90 @@ function updateStats() {
                               * state.motion).toFixed(0);
     $('stat-w').textContent = (state.cmd > 0 && stalled() ? motorPower() / 1000
                               : dir > 0 ? motorPower() * state.motion / 1000 : 0).toFixed(1);
+
+    // How much room is left before the machine's centre of gravity walks
+    // out past the wheels. This was worked out from the first version of
+    // this file and shown nowhere, which made the load offset slider a
+    // control with no consequence - and the one thing the offset does is
+    // have a consequence.
+    const tm = tipMargin(), t = $('stat-t');
+    t.textContent = tm.toFixed(0);
+    t.classList.toggle('text-rose-600', tm <= 0);
+    t.classList.toggle('text-amber-600', tm > 0 && tm < 90);
+    t.classList.toggle('text-slate-700', tm >= 90);
+
+    updateMessage();
+    paintLiftButtons();
+}
+
+// =============================================================
+//  Saying what is wrong
+// =============================================================
+// A control that does nothing when pressed is worse than one that is
+// not there. Two things say why: the buttons that cannot do anything go
+// dead, and a line in the corner names the reason.
+//
+// Both are worked out from the machine's state rather than set when a
+// button is pressed, because most of these arrive while nobody is
+// pressing anything - the load slides out, the pressure climbs past the
+// relief setting, the deck reaches its stop.
+const MSG_STYLE = {
+    danger: ['bg-rose-600', 'text-white', 'border-rose-700'],
+    warn:   ['bg-amber-500', 'text-white', 'border-amber-600'],
+    info:   ['bg-white', 'text-slate-600', 'border-slate-200']
+};
+let lastMsg = null;
+
+function setMsg(kind, text) {
+    const key = kind + '|' + text;
+    if (key === lastMsg) return;          // the DOM is not touched every frame
+    lastMsg = key;
+    const el = $('msg');
+    Object.keys(MSG_STYLE).forEach(k => el.classList.remove.apply(el.classList, MSG_STYLE[k]));
+    if (!text) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.classList.add.apply(el.classList, MSG_STYLE[kind]);
+    el.textContent = text;
+}
+
+// Worst first: only one thing is shown, and it should be the thing that
+// matters most, not the most recent.
+function updateMessage() {
+    const tm = tipMargin();
+    if (outOfLevel()) {
+        setMsg('danger', 'Out of level. The load is past the wheel line and the machine is going ' +
+                         'over. Raising is inhibited - lower it, or bring the load in.');
+    } else if (state.cmd > 0 && stalled()) {
+        setMsg('danger', 'Relief valve open. This load needs ' + pressure().toFixed(0) +
+                         ' bar and the valve is set to ' + P.relief + '. The pump is working ' +
+                         'and the oil is going round in a circle.');
+    } else if (tm < 90) {
+        setMsg('warn', 'Tip margin ' + tm.toFixed(0) + ' mm. The centre of gravity is nearly ' +
+                       'over the wheels - bring the load in before raising.');
+    } else if (atStop(1)) {
+        setMsg('info', 'Fully raised.');
+    } else if (atStop(-1)) {
+        setMsg('info', 'Fully lowered.');
+    } else {
+        setMsg('info', '');
+    }
+}
+
+// Up is refused at the top and out of level. Down is refused only at the
+// bottom: lowering is how you get out of every one of these, so it is
+// the one thing that must never be taken away.
+let lastBtns = null;
+function paintLiftButtons() {
+    const noUp = atStop(1) || outOfLevel(), noDown = atStop(-1);
+    const key = (noUp ? 1 : 0) + '' + (noDown ? 1 : 0);
+    if (key === lastBtns) return;
+    lastBtns = key;
+    [[$('btn-up'), noUp], [$('btn-down'), noDown]].forEach(pair => {
+        const b = pair[0], off = pair[1];
+        b.disabled = off;
+        b.classList.toggle('opacity-40', off);
+        b.classList.toggle('cursor-not-allowed', off);
+    });
 }
 
 // =============================================================
@@ -2110,6 +2290,8 @@ const atStop = dir => dir > 0 ? state.th >= TH_MAX - 1e-9 : state.th <= TH_MIN +
 // Sounded the moment a direction is asked for, before any of it moves.
 function warnAndGo(dir) {
     if (atStop(dir)) { state.cmd = 0; state.warn = 0; return; }
+    // Up is inhibited out of level. Down is not.
+    if (dir > 0 && outOfLevel()) { state.cmd = 0; state.warn = 0; return; }
     state.cmd = dir;
     state.lastDir = dir;
     state.warn = WARN_TIME;
@@ -2179,6 +2361,7 @@ function stepTravel(dt) {
 
 function step(dt) {
     stepTravel(dt);
+    stepTip(dt);
 
     // The warning runs first and the machine waits for it. This is the
     // order a real one does it in, and it is not decoration: people
@@ -2188,6 +2371,11 @@ function step(dt) {
         state.motion = 0;
         return;
     }
+
+    // If it goes out of level while it is already going up - which is
+    // what happens if the load was too far out to begin with - the
+    // interlock drops the command where it stands.
+    if (state.cmd > 0 && outOfLevel()) state.cmd = 0;
 
     // Past the relief setting the valve opens and the oil goes round in a
     // circle. The motor works just as hard and nothing moves.
@@ -2233,6 +2421,7 @@ function reset() {
     // camera is dragged along by the same jump, since placeMachine moves
     // it by whatever the machine moved.
     state.drive = 0; state.vel = 0; state.spin = 0;
+    state.tip = 0; state.tipRate = 0;
     state.rx = 0; state.rz = 0; state.yaw = 0;
     soundStop();
     ['load', 'offset', 'bore', 'flow', 'relief', 'steer'].forEach(k => {

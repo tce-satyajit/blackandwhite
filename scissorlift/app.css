@@ -8,6 +8,35 @@ body {
     overflow-x: hidden;
 }
 .mono { font-family: 'JetBrains Mono', monospace; }
+
+/* ---- The read-out ------------------------------------------
+   Five numbers on one row, every one of them changing every frame, and
+   two separate things were making the row shuffle sideways as they did.
+
+   The first is that in a proportional face a 1 is narrower than a 0, so
+   the width changes even when the digit count does not. Tabular figures
+   settle that: every digit is set on the same advance, which is what the
+   feature is for and why every instrument panel uses it.
+
+   The second is that the digit count changes too - 39 becomes 211 - and
+   no font feature can help with that. So each field also gets a floor on
+   its width, sized to the widest value that field can actually reach,
+   and the number is set against the right so it stays beside its unit
+   and the slack falls after the label instead. It is a floor and not a
+   fixed width: an unexpected value still gets its room, it just moves
+   the row when it does. */
+.stat {
+    display: inline-block;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+#stat-h { min-width: 4ch; }    /* 0.65 to 1.80 */
+#stat-f { min-width: 4ch; }    /* up to about 500 kN, flat out at 2 t */
+#stat-p { min-width: 4.6ch; }  /* four digits, on a 50 mm bore at the bottom */
+#stat-v { min-width: 4.6ch; }  /* four digits, and a minus sign coming down */
+#stat-w { min-width: 4.6ch; }
+#stat-t { min-width: 4.6ch; }  /* 420 down to a negative, once it is over */
 canvas { touch-action: none; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
