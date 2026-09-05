@@ -466,18 +466,47 @@ function brandTexture() {
     g.textAlign = 'center'; g.textBaseline = 'middle';
     // a shadow under the letters and a highlight above, which is what
     // makes raised lettering read as raised
-    g.font = 'bold 150px Inter, system-ui, sans-serif';
+    g.font = 'bold 100px Inter, system-ui, sans-serif';
     g.fillStyle = 'rgba(0,0,0,0.34)';
-    g.fillText('TCE LAB', 512 + 4, 100 + 5);
+    g.fillText('TCE-LAB', 512 + 4, 100 + 5);
     g.fillStyle = 'rgba(255,255,255,0.30)';
-    g.fillText('TCE LAB', 512 - 2, 100 - 3);
+    g.fillText('TCE-LAB', 512 - 2, 100 - 3);
     g.fillStyle = 'rgba(226,232,240,0.44)';
-    g.fillText('TCE LAB', 512, 100);
-    g.font = 'bold 44px Inter, system-ui, sans-serif';
+    g.fillText('TCE-LAB', 512, 100);
+    g.font = 'bold 84px Inter, system-ui, sans-serif';
     g.fillStyle = 'rgba(0,0,0,0.28)';
     g.fillText('305 mm  ·  3450 rpm', 512 + 2, 196 + 3);
     g.fillStyle = 'rgba(226,232,240,0.36)';
     g.fillText('305 mm  ·  3450 rpm', 512, 196);
+    return new THREE.CanvasTexture(c);
+}
+
+// The badge on the cabinet. Etched into acrylic rather than printed on
+// it: the letters are frosted, so they catch the light and the panel
+// stays see-through behind them. Drawn light on transparent for the same
+// reason the table lettering is - a solid plate stuck to a glazed panel
+// would block the very thing the panel is glazed for.
+function badgeTexture() {
+    const c = document.createElement('canvas');
+    c.width = 768; c.height = 256;
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, 768, 256);
+    // the etched outline
+    g.strokeStyle = 'rgba(255,255,255,0.34)';
+    g.lineWidth = 5;
+    g.strokeRect(16, 16, 736, 224);
+    g.strokeStyle = 'rgba(255,255,255,0.16)';
+    g.lineWidth = 2;
+    g.strokeRect(30, 30, 708, 196);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = 'bold 96px Inter, system-ui, sans-serif';
+    g.fillStyle = 'rgba(20,28,40,0.30)';
+    g.fillText('TCE LAB', 384 + 3, 104 + 4);
+    g.fillStyle = 'rgb(251, 249, 249)';
+    g.fillText('TCE LAB', 384, 102);
+    g.font = 'bold 34px Inter, system-ui, sans-serif';
+    g.fillStyle = 'rgba(255,255,255,0.40)';
+    g.fillText('TABLE SAW  ·  305 mm  ·  1.8 kW', 384, 180);
     return new THREE.CanvasTexture(c);
 }
 
@@ -522,8 +551,8 @@ function platePlateTexture() {
     g.strokeStyle = '#4a5058'; g.lineWidth = 5;
     g.strokeRect(10, 10, 492, 236);
     g.fillStyle = '#22262c';
-    g.font = 'bold 34px Inter, sans-serif'; g.textAlign = 'left';
-    g.fillText('TCE LAB', 32, 56);
+    g.font = 'bold 24px Inter, sans-serif'; g.textAlign = 'left';
+    g.fillText('TCE-LAB', 32, 56);
     g.font = 'bold 24px Inter, sans-serif';
     [['MOTOR', '1.8 kW  2.4 HP'], ['SUPPLY', '230 V  1ph  50 Hz'],
      ['SPEED', String(MOTOR_RPM) + ' rpm'], ['ARBOR', String(Math.round(freeRpm())) + ' rpm']]
@@ -879,8 +908,22 @@ function buildMachine() {
     skin(8, CAB_H, CAB_Z,  CAB_X / 2, cy, CAB_CZ);           // back
     skin(CAB_X, CAB_H, 8, 0, cy, CAB_CZ - CAB_Z / 2);        // left, the tilt side
     skin(CAB_X, CAB_H, 8, 0, cy, CAB_CZ + CAB_Z / 2);        // right
+    // The badge, centred on the tilt-side panel - the one the bevel
+    // wheel stands on. Facing -z: a viewer on that side has their right
+    // at -x, so the lettering runs that way and reads across rather than
+    // backwards. Centred on the panel's own span, not on the origin,
+    // because the cabinet is offset in z and the two are not the same.
+    const badge = new THREE.Mesh(new THREE.PlaneGeometry(196, 65),
+        new THREE.MeshStandardMaterial({ map: badgeTexture(), transparent: true,
+                                         roughness: 0.2, metalness: 0.1,
+                                         depthWrite: false }));
+    badge.rotation.y = Math.PI;
+    badge.position.set(0, CAB_Y0 + CAB_H / 2, CAB_CZ - CAB_Z / 2 - 6);
+    scene.add(badge); cabSkins.push(badge);
+
     // the access door, and the red band along its top edge — the same
     // stripe the lathe wears where its castings meet
+
     const band = new THREE.Mesh(roundedBox(CAB_X, 9, CAB_Z + 4, 2),
         new THREE.MeshStandardMaterial({ color: 0xb5301f, roughness: 0.45, metalness: 0.12 }));
     band.position.set(0, CAB_Y0 + CAB_H - 22, CAB_CZ);
