@@ -62,7 +62,13 @@
             padding: 5px;
             color: gray;
         }
-        header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+        header h1 { 
+            margin: 0;
+    font-size: 24px;
+    /* font-weight: 700; */
+    letter-spacing: 2px;
+    
+        }
         header p { margin: 4px 0 0; font-size: 13px; color: var(--ink-mid); font-style: italic; }
 
         /* At a 272px track, 1560px of page fits five columns (5x272 + 4x18
@@ -93,7 +99,7 @@
     font-size: 20px;
     font-weight: 700;
     letter-spacing: .12em;
-    text-transform: uppercase;
+    
     /* position: relative; */
     /* float: right; */
     /* right: -50px; */
@@ -109,15 +115,17 @@
     align-items: center;
         }
         .cardNumberText{
-            background: #dadada;
+            background: #00000012;
     width: 30px;
     height: 30px;
     line-height: 30px;
-    border-radius: 4px;
+    border-radius: 8px;
     align-items: center;
-    color: white;
+    color: #bcbcbc;
     text-align: center;
     font-size: 16px;
+    /* text-shadow: 1px 1px #919191; */
+    /* font-family: monospace;*/
         }
         .shot {
             display: block;
@@ -137,7 +145,7 @@
             width: 100%;
             height: auto;
             display: block;
-            filter: grayscale(1) contrast(1.12) sepia(.18) brightness(.94);
+            filter: grayscale(1) contrast(1.12) sepia(.30) brightness(.90);
             border-radius: 12px;
             transition: filter .12s ease-out;
             
@@ -148,7 +156,7 @@
         /* The label stays, but as a small plate at the foot of the shot rather than
            a scrim over the whole of it, so the colour underneath is still readable. */
         .shot::after {
-            content: "Open simulation";
+            content: "Run";
             position: absolute;
             left: 50%;
             bottom: 18px;
@@ -184,8 +192,19 @@
     border-radius: 5px;
     padding: 2px 7px;
         }
-        .card h2 { margin: 0; padding: 10px 9px 8px; font-size: 15px;
-                   font-weight: 700; letter-spacing: -.01em; }
+        .card h2 { 
+            margin: 0;
+    padding: 10px 9px 8px;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    /* font-family: cursive;
+    text-transform: lowercase; */
+    text-align: left;
+    width: 231px;
+    /* background: #dddddd; */
+    
+                }
         .body p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--ink-mid); flex: 1; }
 
         /* Rule between the copy and the controls, like a printed divider */
@@ -311,7 +330,7 @@
 <body>
 
     <header>
-        <h1>BLACK & WHITE</h1>
+        <h1>Black & White</h1>
         <p>Interactive Simulations</p>
     </header>
 

@@ -1839,11 +1839,18 @@ function step(dt) {
         layoutBoard();
         if (state.retT === 0) { state.done = false; newBoard(); }
     }
-    // and the motor coming up to speed. An induction motor takes a
-    // second or two to run up and it coasts for a good while after,
-    // which is exactly why the guard matters after the switch is off.
+    // Running up and running down. An induction motor takes a second or
+    // two to come up to speed, and a bare one left to coast would take
+    // the better part of a minute to stop - a 305 mm blade carries real
+    // energy, which is exactly why saws of this size are sold with an
+    // electric brake. This one has one, so the run-down is a few seconds
+    // rather than a wait: still visibly a coast, not a dead stop, but
+    // short enough that nobody sits watching it.
     const want = state.power ? 1 : 0;
-    state.startT += (want - state.startT) * Math.min(1, dt / (state.power ? 0.8 : 2.6));
+    state.startT += (want - state.startT) * Math.min(1, dt / (state.power ? 0.8 : 0.85));
+    // and it is allowed to arrive: an exponential never reaches zero on
+    // its own, so the last sliver is cut off rather than crawling
+    if (!state.power && state.startT < 0.02) state.startT = 0;
 
     // The blade's speed. Free-running it is fixed; loaded past what the
     // motor has, it droops — and a saw bogging down is a sound before it
@@ -1856,7 +1863,7 @@ function step(dt) {
     }
     const target = free * droop;
     state.rpm += (target - state.rpm) * Math.min(1, dt / 0.55);
-    if (state.rpm < 2) state.rpm = 0;
+    if (state.rpm < 25) state.rpm = 0;
     state.stalled = state.cutting && overloaded();
 
     state.spin += 2 * Math.PI * state.rpm / 60 * dt;
