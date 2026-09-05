@@ -1817,6 +1817,17 @@ let lastCx = null, lastCz = null;
 const TILT_LIMIT = 3 * Math.PI / 180;
 const outOfLevel = () => Math.abs(tiltAngle()) > TILT_LIMIT;
 
+// Travel goes with it. The same switch that stops it elevating stops it
+// driving, and for a better reason: a machine already leaning past its
+// wheel line is being held up by nothing but the load not having moved
+// yet, and a wheel finding a joint in the concrete is exactly what moves
+// it. Lowering stays: it is still the way out.
+//
+// Read off outOfLevel rather than tipping, so travel and lift are
+// working from the one sensor. Anything else would have the drive
+// knowing where the load is when the lift does not.
+const travelInhibited = () => outOfLevel();
+
 const TILT_SQUASH = 0.9 * Math.PI / 180;
 const TILT_MAX = 18 * Math.PI / 180;
 
@@ -2193,6 +2204,7 @@ function updateStats() {
 
     updateMessage();
     paintLiftButtons();
+    paintTravelButtons();
 }
 
 // =============================================================
@@ -2231,7 +2243,8 @@ function updateMessage() {
     const tm = tipMargin();
     if (outOfLevel()) {
         setMsg('danger', 'Out of level. The load is past the wheel line and the machine is going ' +
-                         'over. Raising is inhibited - lower it, or bring the load in.');
+                         'over. Raising and travel are both inhibited - lower it, or bring the ' +
+                         'load in.');
     } else if (state.cmd > 0 && stalled()) {
         setMsg('danger', 'Relief valve open. This load needs ' + pressure().toFixed(0) +
                          ' bar and the valve is set to ' + P.relief + '. The pump is working ' +
@@ -2360,6 +2373,14 @@ function endEase(dir) {
 // 1.3 m, or rather less than its own length. That is why these things
 // are the shape they are.
 function stepTravel(dt) {
+    // Most of these arrive with nobody touching the buttons: the load
+    // slides out, or the machine drives itself out of level while it is
+    // already moving. So the interlock is read here, every step, and it
+    // drops the command where it stands - the same way the lift one does.
+    // The command is cleared rather than the wheels stopped dead, so it
+    // runs down through DRIVE_RAMP and comes to a stop instead of a halt.
+    if (travelInhibited() && state.drive !== 0) { state.drive = 0; paintDrive(); }
+
     const want = state.drive * DRIVE_SPEED * (atStop(-1) ? 1 : CREEP);
     state.vel += (want - state.vel) * Math.min(1, dt / DRIVE_RAMP);
     if (Math.abs(state.vel) < 0.5) { state.vel = 0; return; }
@@ -2476,8 +2497,34 @@ function paintDrive() {
         b.classList.toggle('text-slate-900', !on);
     });
 }
-$('btn-fwd').addEventListener('click', () => { state.drive = 1; paintDrive(); });
-$('btn-rev').addEventListener('click', () => { state.drive = -1; paintDrive(); });
+
+// Fwd and Rev go dead out of level. Park does not: it is the one that
+// takes the command away, so it is the one that has to stay pressable -
+// the same rule that keeps Lower alive.
+let lastDriveBtns = null;
+function paintTravelButtons() {
+    const off = travelInhibited();
+    if (off === lastDriveBtns) return;    // the DOM is not touched every frame
+    lastDriveBtns = off;
+    ['btn-fwd', 'btn-rev'].forEach(id => {
+        const b = $(id);
+        b.disabled = off;
+        b.classList.toggle('opacity-40', off);
+        b.classList.toggle('cursor-not-allowed', off);
+    });
+}
+
+// Guarded here as well as in stepTravel. The step catches the ones that
+// arrive on their own; this catches the press, so the button refuses in
+// the same frame rather than taking the command and giving it back.
+$('btn-fwd').addEventListener('click', () => {
+    if (travelInhibited()) return;
+    state.drive = 1; paintDrive();
+});
+$('btn-rev').addEventListener('click', () => {
+    if (travelInhibited()) return;
+    state.drive = -1; paintDrive();
+});
 $('btn-park').addEventListener('click', () => { state.drive = 0; paintDrive(); });
 
 function paintViews(name) {
