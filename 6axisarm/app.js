@@ -2040,6 +2040,33 @@ $('info-backdrop').addEventListener('click', () => infoModal.classList.add('hidd
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !infoModal.classList.contains('hidden'))
         infoModal.classList.add('hidden');
+
+    // Press C to read the camera off the screen. Turning the cell to a
+    // view worth keeping and then having to work out where the camera
+    // ended up means opening the console; this puts it over the stage
+    // and copies it, so the view can just be written down.
+    if ((e.key === 'c' || e.key === 'C') && gl) {
+        const r = v => Math.round(v);
+        const txt = '{ pos: [' + r(camera.position.x) + ', ' + r(camera.position.y)
+                  + ', ' + r(camera.position.z) + '], tgt: [' + r(controls.target.x)
+                  + ', ' + r(controls.target.y) + ', ' + r(controls.target.z) + '] }'
+                  + (camFollow ? '   (tool follow-cam)' : '');
+        let tag = document.getElementById('camtag');
+        if (!tag) {
+            tag = document.createElement('div');
+            tag.id = 'camtag';
+            tag.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);'
+                + 'z-index:20;padding:7px 14px;border-radius:10px;background:#0f172a;'
+                + 'color:#e2e8f0;font:12px ui-monospace,monospace;box-shadow:0 2px 10px #0006';
+            document.getElementById('stage').appendChild(tag);
+        }
+        tag.textContent = txt;
+        tag.style.display = '';
+        clearTimeout(tag._t);
+        tag._t = setTimeout(() => { tag.style.display = 'none'; }, 20000);
+        try { navigator.clipboard.writeText(txt); } catch (err) {}
+        console.log(txt);
+    }
 });
 
 function hideLoader() {
