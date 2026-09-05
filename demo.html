@@ -139,26 +139,35 @@
             display: block;
             filter: grayscale(1) contrast(1.12) sepia(.18) brightness(.94);
             border-radius: 12px;
+            transition: filter .12s ease-out;
+            
         }
+        /* On rollover the treatment lifts so the shot reads in full colour. */
+        .card:hover .shot img, .shot:hover img, .shot:focus-visible img { filter: none; }
+
+        /* The label stays, but as a small plate at the foot of the shot rather than
+           a scrim over the whole of it, so the colour underneath is still readable. */
         .shot::after {
             content: "Open simulation";
             position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            left: 50%;
+            bottom: 18px;
+            transform: translateX(-50%);
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             font-size: 11px;
             font-weight: 700;
             letter-spacing: .12em;
             text-transform: uppercase;
+            line-height: 1;
+            white-space: nowrap;
             color: var(--paper);
-            background: rgba(23, 22, 19, .74);
+            background: rgba(23, 22, 19, 0.561);
+            padding: 7px 12px;
+            border-radius: 6px;
             opacity: 0;
-            border-radius: 10px;
             transition: opacity .12s steps(2, end);
         }
-        .shot:hover::after, .shot:focus-visible::after { opacity: 1; }
+        .card:hover .shot::after, .shot:hover::after, .shot:focus-visible::after { opacity: 1; }
 
         .body { padding: 9px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
 
