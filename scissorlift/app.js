@@ -35,6 +35,13 @@ const WHEEL_X = 420;                  // how far out the wheels are - the tippin
 const DEFAULTS = { load: 600, offset: 0, bore: 80, flow: 8, relief: 250, steer: 0 };
 const P = Object.assign({}, DEFAULTS);
 
+// Which of those have a slider. Relief does not: it is fixed at its 250 bar
+// setting, the way it is on a machine that has left the factory - the valve
+// is there, it still dumps the oil when the load asks for more than it is
+// set to, but it is not a knob the operator turns. Listed once, because two
+// copies of this list are two chances for one of them to be wrong.
+const SLIDERS = ['load', 'offset', 'bore', 'flow', 'steer'];
+
 const state = {
     th: TH_MIN,                        // the one variable the machine has
     cmd: 0,                            // -1 lowering, 0 holding, +1 raising
@@ -2461,7 +2468,7 @@ function reset() {
     state.tip = 0; state.tipRate = 0;
     state.rx = 0; state.rz = 0; state.yaw = 0;
     soundStop();
-    ['load', 'offset', 'bore', 'flow', 'relief', 'steer'].forEach(k => {
+    SLIDERS.forEach(k => {
         $('s-' + k).value = P[k];
         $('v-' + k).textContent = P[k];
     });
@@ -2475,7 +2482,34 @@ function bindSlider(id, key, after) {
         if (after) after();
     });
 }
-['load', 'offset', 'bore', 'flow', 'relief', 'steer'].forEach(k => bindSlider('s-' + k, k));
+SLIDERS.forEach(k => bindSlider('s-' + k, k));
+
+// The steering is sprung, and the others are not. The rest of these set
+// the machine up - a bore is 80 mm until someone changes it - but the
+// steering is not a setting, it is a thing you hold over while the
+// machine is moving. A joystick or a rocker is what is really there, and
+// neither stays where it is put: let go and the wheels come back to
+// straight ahead. Left where it was dropped, the machine drives itself
+// in circles with nothing on screen saying why.
+(function springSteering() {
+    const s = $('s-steer'), out = $('v-steer');
+    const recentre = () => {
+        if (P.steer === 0) return;
+        P.steer = 0;
+        s.value = 0;
+        out.textContent = 0;
+    };
+    // The release is watched on the window, not the input: dragged off the
+    // end of the track and let go, the input never sees the pointerup.
+    let held = false;
+    s.addEventListener('pointerdown', () => { held = true; });
+    ['pointerup', 'pointercancel'].forEach(e => window.addEventListener(e, () => {
+        if (held) { held = false; recentre(); }
+    }));
+    // And the same for the keyboard, which arrows it over a step at a time.
+    s.addEventListener('keyup', recentre);
+    s.addEventListener('blur', recentre);
+})();
 
 function paintRun() {
     $('btn-up').classList.toggle('bg-slate-900', state.cmd >= 0);

@@ -91,13 +91,20 @@
 
             </div>
 
-            <div id="panel" class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col xl:flex-row gap-2">
+            <!-- Three rows, and the order is the order you use them in: what the
+                 machine is set up with, then where it is pointed and looked at,
+                 then the things that make it move. The hide button is absolutely
+                 positioned in the corner, so it costs none of them a row. -->
+            <div id="panel" class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col gap-2">
                 <button id="btn-hide" title="Hide the controls (Esc)" aria-label="Hide the controls"
                         class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
                     <i class="fa-solid fa-chevron-down"></i>
                 </button>
 
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-start xl:w-[620px] shrink-0">
+                <!-- Row 1. The four the machine is actually set up with. Narrow,
+                     they stack two and two; from sm up they sit on the single
+                     line they belong on. -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 items-start w-full">
                     <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
                         <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
                             <label for="s-load" class="font-semibold text-slate-700" title="What is on the deck. The lift's own top weighs 420 kg before you put anything on it.">Load</label>
@@ -130,25 +137,10 @@
                         <input id="s-flow" type="range" min="2" max="20" step="1" value="8" class="w-full">
                         <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>2</span><span>Q</span><span>20</span></div>
                     </div>
-                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
-                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
-                            <label for="s-relief" class="font-semibold text-slate-700" title="The pressure at which the relief valve gives up and dumps the oil back to tank. It is what stops the machine tearing itself apart.">Relief valve</label>
-                            <span class="mono text-slate-900 font-bold"><span id="v-relief">250</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">bar</span></span>
-                        </div>
-                        <input id="s-relief" type="range" min="80" max="350" step="10" value="250" class="w-full">
-                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>80</span><span>p</span><span>350</span></div>
-                    </div>
-                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
-                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
-                            <label for="s-steer" class="font-semibold text-slate-700" title="Which way the front wheels are pointing. They hang off a king pin, so they turn; the back pair are fixed. Nothing to do with the lifting - it is how the machine is aimed before it is parked and worked on.">Steering</label>
-                            <span class="mono text-slate-900 font-bold"><span id="v-steer">0</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">&deg;</span></span>
-                        </div>
-                        <input id="s-steer" type="range" min="-32" max="32" step="1" value="0" class="w-full">
-                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>-32</span><span>&#8635;</span><span>+32</span></div>
-                    </div>
                 </div>
 
-                <div class="flex flex-wrap items-center justify-center xl:justify-start gap-2 flex-1 min-w-0">
+                <!-- Row 2. Where it is pointed, and what you are looking at. -->
+                <div class="flex flex-wrap items-start justify-center gap-2 min-w-0">
 
                     <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
                         <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center">View</div>
@@ -162,16 +154,36 @@
                         </div>
                     </div>
 
+                    <!-- Travel and steering, in one panel. They are one operation: the
+                         steering angle does nothing at all until the machine is moving,
+                         and which way it goes when it does move is the two of them
+                         together. Sat in the slider grid, the angle read as another
+                         parameter of the machine, alongside bore and pump flow,
+                         which is the one thing it is not. -->
                     <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
                         <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Drive it across the floor. Steering aims the front wheels; the machine turns about a point out on its rear axle, exactly as a car does.">Travel</div>
-                        <div class="flex items-center justify-center gap-1">
-                            <button id="btn-rev" class="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" title="Reverse.">&#9664; Rev</button>
-                            <button id="btn-park" class="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" title="Stop travelling.">Park</button>
-                            <button id="btn-fwd" class="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" title="Forward. Raised, it drops to a quarter speed - which is what these do, and why.">Fwd &#9654;</button>
+                        <div class="flex items-center justify-center gap-2">
+                            <div class="flex items-center gap-1">
+                                <button id="btn-rev" class="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" title="Reverse.">&#9664; Rev</button>
+                                <button id="btn-park" class="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" title="Stop travelling.">Park</button>
+                                <button id="btn-fwd" class="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" title="Forward. Raised, it drops to a quarter speed - which is what these do, and why.">Fwd &#9654;</button>
+                            </div>
+                            <span class="self-stretch w-px bg-slate-200"></span>
+                            <div class="flex flex-col gap-0.5 w-[150px] shrink-0">
+                                <div class="flex justify-between items-center gap-2 text-[calc(12px*var(--fs))] leading-none">
+                                    <label for="s-steer" class="font-semibold text-slate-700" title="Which way the front wheels are pointing. They hang off a king pin, so they turn; the back pair are fixed. Sprung, like the joystick it stands for: hold it over to turn, let go and it comes back to straight ahead.">Steering</label>
+                                    <span class="mono text-slate-900 font-bold"><span id="v-steer">0</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">&deg;</span></span>
+                                </div>
+                                <!-- No end labels under this one. The others need
+                                     their range spelled out; left and right do not. -->
+                                <input id="s-steer" type="range" min="-32" max="32" step="1" value="0" class="w-full">
+                            </div>
                         </div>
                     </div>
+                </div>
 
-                    <div class="flex items-center justify-center flex-wrap gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm min-w-0">
+                <!-- Row 3. The things that make it move, and the overlays. -->
+                <div class="flex items-center justify-center flex-wrap gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm min-w-0">
                         <button id="btn-up" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-700 text-white border-slate-900 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5">
                             <i class="fa-solid fa-arrow-up"></i><span>Raise</span>
                         </button>
@@ -208,7 +220,6 @@
                         <button id="btn-info" class="p-2 w-9 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition" title="Learning outcomes and the physics" aria-label="Learning outcomes">
                             <i class="fa-solid fa-circle-info"></i>
                         </button>
-                    </div>
                 </div>
             </div>
         </div>
@@ -285,7 +296,7 @@
                     <h3 class="font-bold text-slate-800 mb-1">6. Try this</h3>
                     <ul class="list-disc pl-5 space-y-1">
                         <li><b>Find the hard part.</b> Load it to 1500 kg and raise it from flat. Watch the pressure gauge as it climbs. Where is the pressure worst &mdash; and is that where you expected?</li>
-                        <li><b>Stall it, then cheat.</b> Turn the relief valve down to 120 bar and try to lift 2000 kg off the floor. It will not go. Now raise the lift halfway by hand (lower the load, lift, put the load back) and try again from there. Why does the same lift now manage the same weight?</li>
+                        <li><b>Stall it, then cheat.</b> Load it to 2000 kg and try to raise it off the floor. It will not go &mdash; the relief valve is set at 250 bar and the linkage, lying flat, is asking for very nearly 500. Now get the lift halfway up by hand (take the load off, raise it, put the load back) and try again from there. Why does the same lift now manage the same weight?</li>
                         <li><b>Prove the bargain.</b> Note the ram force and the lift speed near the bottom, then again near the top. Multiply each force by its speed. Why do the two answers come out so close?</li>
                         <li><b>Area beats effort.</b> Leave everything alone and take the bore from 50 mm to 130 mm. Predict what happens to the pressure before you look &mdash; is it halved, or something else? Then explain what happened to the speed.</li>
                         <li><b>Power, not force.</b> Double the pump flow and watch the motor power. Then double the load instead. Which one costs the motor more, and why?</li>
