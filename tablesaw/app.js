@@ -34,8 +34,8 @@ const ARB_PULLEY = ARB_TEETH * BELT_PITCH / Math.PI;
 const BELT_RATIO = MOT_TEETH / ARB_TEETH;
 
 const BLADE_R = 152;                  // a 305 mm / 12 inch blade
-const KERF = 3.2;                     // how wide a slot the teeth cut
-const PLATE_T = 2.2;                  // and how thick the plate behind them
+const KERF = 4.0;                     // how wide a slot the teeth cut
+const PLATE_T = 3.0;                  // and how thick the plate behind them
 const MAX_LIFT = 98;                  // full projection above the table
 
 // The three blades in the drawer, and they are not interchangeable.
@@ -104,6 +104,7 @@ const state = {
     liftShown: DEFAULTS.lift, tiltShown: DEFAULTS.tilt,
     ripShown: DEFAULTS.rip,
     paused: false,
+    retT: 0, retFrom: 0,           // the board travelling back to the infeed
     dust: true, sound: true,
     mesh: false, turntable: false, parts: false,
     cabinet: true,                    // and the sheet steel over the works
@@ -494,10 +495,10 @@ function badgeTexture() {
     // the etched outline
     g.strokeStyle = 'rgba(255,255,255,0.34)';
     g.lineWidth = 5;
-    g.strokeRect(16, 16, 736, 224);
+    //g.strokeRect(16, 16, 736, 224);
     g.strokeStyle = 'rgba(255,255,255,0.16)';
     g.lineWidth = 2;
-    g.strokeRect(30, 30, 708, 196);
+    //g.strokeRect(30, 30, 708, 196);
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.font = 'bold 96px Inter, system-ui, sans-serif';
     g.fillStyle = 'rgba(20,28,40,0.30)';
@@ -505,7 +506,7 @@ function badgeTexture() {
     g.fillStyle = 'rgb(251, 249, 249)';
     g.fillText('TCE LAB', 384, 102);
     g.font = 'bold 34px Inter, system-ui, sans-serif';
-    g.fillStyle = 'rgba(255,255,255,0.40)';
+    g.fillStyle = 'rgb(255, 255, 255)';
     g.fillText('TABLE SAW  ·  305 mm  ·  1.8 kW', 384, 180);
     return new THREE.CanvasTexture(c);
 }
@@ -1429,16 +1430,6 @@ function buildMachine() {
     stopBtn.rotation.z = Math.PI / 2;
     stopBtn.position.set(RAIL_X - 62, RAIL_Y - 58, 210);
     scene.add(stopBtn);
-    // the flex, down the leg and away across the floor
-    const cordPts = [
-        new THREE.Vector3(RAIL_X - 30, RAIL_Y - 170, 210),
-        new THREE.Vector3(RAIL_X - 40, 260, 260),
-        new THREE.Vector3(RAIL_X - 90, 40, 330),
-        new THREE.Vector3(RAIL_X - 300, 8, 520)
-    ];
-    const cord = new THREE.Mesh(
-        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(cordPts), 26, 7, 8), MAT.dark);
-    scene.add(cord);
 
     // Two panel instruments. They are only telling you what the physics
     // already says — the volts sag under load and the current is the
@@ -1841,6 +1832,13 @@ function step(dt) {
         state.setupT = Math.min(1, state.setupT + dt / 0.55);
         layoutBoard();
     }
+    // the board being carried back to the infeed after a cut
+    if (state.retT > 0) {
+        state.retT = Math.max(0, state.retT - dt);
+        state.fed = state.retFrom * ease(state.retT / RET_TIME);
+        layoutBoard();
+        if (state.retT === 0) { state.done = false; newBoard(); }
+    }
     // and the motor coming up to speed. An induction motor takes a
     // second or two to run up and it coasts for a good while after,
     // which is exactly why the guard matters after the switch is off.
@@ -1865,7 +1863,7 @@ function step(dt) {
     state.spinShown = state.spin;
 
     // --- the feed -------------------------------------------------
-    if (state.running && !state.done) {
+    if (state.running && !state.done && state.retT <= 0) {
         const hc = halfChord();
         state.fed += P.feed * dt;
         const lead = -hc - LEAD_IN + state.fed;
@@ -1914,18 +1912,37 @@ function step(dt) {
     state.ripShown += (P.rip - state.ripShown) * Math.min(1, dt / 0.4);
 }
 
+// The board goes back where it came from, and it TRAVELS back rather
+// than teleporting - a workpiece that vanishes from the outfeed and
+// reappears at the infeed reads as a glitch, not as the operator
+// carrying it round. Once it is home a fresh one is laid on, because a
+// board that has been sawn in two cannot be un-sawn.
+const RET_TIME = 1.0;
+function returnStock() {
+    if (state.fed <= 0.5) { newBoard(); return; }
+    state.retFrom = state.fed;
+    state.retT = RET_TIME;
+    state.running = false;
+    state.cutting = false;
+}
+
+// The cut is over: the motor is switched off and left to coast. It does
+// not stop dead, and that run-down is worth seeing - it is the reason a
+// saw is dangerous for a good few seconds after the switch.
 function finishCut() {
     state.running = false;
     state.done = true;
     state.cutting = false;
+    state.power = false;
     paintBoard();
+    paintRun();
 }
 
 function resetAll() {
-    state.running = false; state.done = false; state.cutting = false;
-    state.fed = 0; state.elapsed = 0; state.kickRisk = 0;
+    state.done = false; state.paused = false;
+    state.elapsed = 0; state.kickRisk = 0;
     clearDust();
-    newBoard();
+    returnStock();
 }
 
 // =============================================================
@@ -1938,7 +1955,7 @@ function update3D() {
     const b = tiltRad();
     tiltGrp.rotation.x = b;
     arborGrp.position.y = -(BLADE_R - state.liftShown);
-    bladeGrp.rotation.z = -state.spinShown;
+    bladeGrp.rotation.z = state.spinShown;
 
     // --- the height train -----------------------------------------
     // Wheel, shaft, bevel, bevel, screw, nut, carriage. Every one of them
@@ -2218,14 +2235,15 @@ function cue(el) {
 function soundUpdate(dt) {
     if (!aMotor) return;
     const f = state.rpm / Math.max(1, freeRpm());
-    if (state.sound && f > 0.02) {
+    const live = state.sound && !state.paused;
+    if (live && f > 0.02) {
         // the note falls with the blade when the cut loads it, which is
         // the sound every woodworker listens for
-        loopOn(aMotor, 0.10 + 0.16 * f, 0.72 + 0.62 * f, dt);
+        loopOn(aMotor, 0.13 + 0.25 * f, 0.86 + 0.14 * f, dt);
     } else loopFade(aMotor, dt);
 
-    if (state.sound && state.cutting && state.cutIdle < 0.2) {
-        loopOn(aCut, 0.16 + 0.3 * clamp(loadFrac(), 0, 1), 0.9 + 0.35 * f, dt);
+    if (live && state.cutting && state.cutIdle < 0.2) {
+        loopOn(aCut, 0.20 + 0.34 * clamp(loadFrac(), 0, 1), 0.94 + 0.06 * f, dt);
     } else loopFade(aCut, dt);
 }
 function soundStop() { [aMotor, aCut].forEach(loopOff); }
@@ -2316,7 +2334,6 @@ const PARTS = [
     { n: 'Panel meters',   pri: 4, p: () => new THREE.Vector3(RAIL_X - 60, RAIL_Y - 62, 210) },
     { n: 'Supply lamp',    pri: 6, p: () => lampMesh
             ? lampMesh.getWorldPosition(new THREE.Vector3()) : null },
-    { n: 'Supply cord',    pri: 3, p: () => new THREE.Vector3(RAIL_X - 90, 40, 330) },
     { n: 'Dust shroud',    pri: 5, p: () => tiltGrp
             ? tiltGrp.localToWorld(new THREE.Vector3(50, -330, -20)) : null },
     { n: 'Cabinet',        pri: 5, p: () => state.cabinet
@@ -2458,9 +2475,10 @@ document.querySelectorAll('.vseg').forEach(b => b.addEventListener('click', () =
 
 $('btn-power').addEventListener('click', () => {
     state.power = !state.power;
+    state.paused = false;                 // the starter always wakes it up
     // no soundStop here: the blade coasts for seconds after the switch
     // and the motor loop has to fade with it, not be cut and restarted
-    if (!state.power) { state.running = false; }
+    if (!state.power) { state.running = false; returnStock(); }
     paintRun();
 });
 $('btn-start').addEventListener('click', () => { startCut(); paintRun(); });
@@ -2475,7 +2493,6 @@ $('btn-stop').addEventListener('click', () => {
         flash('Paused.', 'The whole machine is stopped where it stands - blade, feed '
                        + 'and all. Turn the model round and look at the cut, then '
                        + 'press Resume.');
-        soundStop();
     }
     paintRun();
 });

@@ -31,10 +31,12 @@
         <p class="cap">Loading Table Saw&hellip;</p>
     </div>
 
-    <!-- The motor runs the whole time the starter is in; the cutting loop
-         lays over it only while the teeth are actually in timber. -->
-    <audio id="a-motor" src="vendor/audio/drill_motor.mp3" preload="auto" loop></audio>
-    <audio id="a-cut" src="vendor/audio/drill_wood.mp3" preload="auto" loop></audio>
+    <!-- The saw running, and the sound of it in timber. The running loop is
+         there the whole time the starter is in; the cutting loop lays over
+         the top of it only while the teeth are actually in the wood. Both
+         are faded rather than paused, or the loop restarts audibly. -->
+    <audio id="a-motor" src="vendor/audio/table-saw-running.mp3" preload="auto" loop></audio>
+    <audio id="a-cut" src="vendor/audio/table-saw-cutting.mp3" preload="auto" loop></audio>
     <audio id="a-place" src="vendor/audio/change_material.mp3" preload="auto"></audio>
 
     <header class="glass-panel sticky top-0 z-30 px-4 border-b border-slate-200 shrink-0">
