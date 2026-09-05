@@ -182,8 +182,11 @@
                     </div>
                 </div>
 
-                <!-- Row 3. The things that make it move, and the overlays. -->
-                <div class="flex items-center justify-center flex-wrap gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm min-w-0">
+                <!-- Row 3. The things that make it move, and the overlays.
+                     self-center, or the row would stretch the full width of the
+                     panel the way a flex column's children do, and draw its
+                     border out across empty space either side of the buttons. -->
+                <div class="flex items-center justify-center flex-wrap gap-1.5 self-center max-w-full bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm min-w-0">
                         <button id="btn-up" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-700 text-white border-slate-900 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5">
                             <i class="fa-solid fa-arrow-up"></i><span>Raise</span>
                         </button>
