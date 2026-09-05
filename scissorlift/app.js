@@ -2491,18 +2491,45 @@ SLIDERS.forEach(k => bindSlider('s-' + k, k));
 // neither stays where it is put: let go and the wheels come back to
 // straight ahead. Left where it was dropped, the machine drives itself
 // in circles with nothing on screen saying why.
+// It winds back rather than being dropped back, and that is not
+// decoration. A CSS transition cannot do it: a range input's thumb sits
+// where its value puts it, so there is no property to animate and the
+// only way to move it over time is to move the value over time. Which is
+// also what makes the wheels follow it round - the steering arms are
+// drawn from P.steer, so tweening the number turns the wheels back to
+// straight ahead instead of snapping them there.
+const SPRING_TIME = 0.22;             // seconds back to centre, released
+
 (function springSteering() {
     const s = $('s-steer'), out = $('v-steer');
-    const recentre = () => {
-        if (P.steer === 0) return;
-        P.steer = 0;
-        s.value = 0;
-        out.textContent = 0;
+    let tween = 0;                    // the rAF handle, 0 when nothing is running
+
+    const show = v => {
+        P.steer = v;                  // fractional, so the wheels turn smoothly
+        s.value = v;                  // the input snaps this to its own step
+        out.textContent = Math.round(v);
     };
+    const stopTween = () => { if (tween) { cancelAnimationFrame(tween); tween = 0; } };
+
+    const recentre = () => {
+        stopTween();
+        const from = P.steer;
+        if (from === 0) return;
+        const t0 = performance.now();
+        const tick = now => {
+            const k = Math.min(1, (now - t0) / (SPRING_TIME * 1000));
+            if (k < 1) { show(from * (1 - ease(k))); tween = requestAnimationFrame(tick); }
+            else { tween = 0; show(0); }
+        };
+        tween = requestAnimationFrame(tick);
+    };
+
+    // Taking hold of it again stops the spring where it is, rather than
+    // fighting the drag for the next fifth of a second.
+    let held = false;
+    s.addEventListener('pointerdown', () => { held = true; stopTween(); });
     // The release is watched on the window, not the input: dragged off the
     // end of the track and let go, the input never sees the pointerup.
-    let held = false;
-    s.addEventListener('pointerdown', () => { held = true; });
     ['pointerup', 'pointercancel'].forEach(e => window.addEventListener(e, () => {
         if (held) { held = false; recentre(); }
     }));

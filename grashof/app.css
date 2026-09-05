@@ -313,3 +313,15 @@ body.controls-off #btn-show {
 #stat-type         { min-width: 122px; }   /* "Double-Rocker" is the longest of the four */
 #stat-rpm-mobile   { min-width: 48px; }   /* hidden at desktop width, so sized from its twin */
 #stat-swing-mobile { min-width: 36px; }   /* hidden at desktop width, so sized from its twin */
+
+/* ---- The info button ------------------------------------------
+   It is the way into the whole explanation behind the simulation, and
+   set at 12px inside a bordered pill it read as a footnote next to
+   controls that are twice its size. The mark carries itself at 24px, so
+   the ring and the padding around it are no longer holding anything up. */
+#btn-info {
+    font-size: 24px;
+    padding: 0;
+    border: 0;
+    line-height: 1;
+}

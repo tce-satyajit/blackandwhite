@@ -313,3 +313,15 @@ body.controls-off #btn-show {
 #stat-disp          { min-width: 54px; }   /* mm, always signed */
 #stat-rpm-mobile    { min-width: 48px; }   /* hidden at desktop width */
 #stat-stroke-mobile { min-width: 43px; }   /* hidden at desktop width */
+
+/* ---- The info button ------------------------------------------
+   It is the way into the whole explanation behind the simulation, and
+   set at 12px inside a bordered pill it read as a footnote next to
+   controls that are twice its size. The mark carries itself at 24px, so
+   the ring and the padding around it are no longer holding anything up. */
+#btn-info {
+    font-size: 24px;
+    padding: 0;
+    border: 0;
+    line-height: 1;
+}
