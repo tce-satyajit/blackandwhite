@@ -22,20 +22,21 @@
 
 const MOTOR_W = 1800;                 // a cabinet saw's induction motor
 const DRIVE_EFF = 0.92;               // what survives one V-belt
-const MOTOR_RPM = 3450;               // two-pole, straight off the mains
-// The belt gears the motor UP, not down: the pulley on the motor is the
-// bigger of the two. A saw wants speed at the rim, where a lathe wants
-// torque at the chuck, and the drive is arranged accordingly.
+const MOTOR_RPM = 1725;               // four-pole, and the smoother for it
+// The belt gears the motor UP, and by a factor of two: the pulley on the
+// motor has twice the teeth of the one on the arbor. A saw wants speed at
+// the rim where a lathe wants torque at the chuck, and the drive is
+// arranged accordingly - 1725 rpm in, 3450 out, 55 m/s at the teeth.
 const BELT_PITCH = 9.5;               // mm from one tooth to the next
-const MOT_TEETH = 19, ARB_TEETH = 16;
+const MOT_TEETH = 40, ARB_TEETH = 20;
 const MOT_PULLEY = MOT_TEETH * BELT_PITCH / Math.PI;   // pitch diameters
 const ARB_PULLEY = ARB_TEETH * BELT_PITCH / Math.PI;
 const BELT_RATIO = MOT_TEETH / ARB_TEETH;
 
-const BLADE_R = 127;                  // a 254 mm / 10 inch blade
+const BLADE_R = 152;                  // a 305 mm / 12 inch blade
 const KERF = 3.2;                     // how wide a slot the teeth cut
 const PLATE_T = 2.2;                  // and how thick the plate behind them
-const MAX_LIFT = 79;                  // full projection above the table
+const MAX_LIFT = 98;                  // full projection above the table
 
 // The three blades in the drawer, and they are not interchangeable.
 // A rip blade has few, big teeth with deep gullets to carry a long
@@ -77,7 +78,7 @@ const MATS = {
 // than the gullet can carry away.
 const FZ_RUB = 0.012, FZ_TEAR = 0.055;
 
-const DEFAULTS = { feed: 55, lift: 40, tilt: 0, thick: 19, rip: 120 };
+const DEFAULTS = { feed: 55, lift: 52, tilt: 0, thick: 19, rip: 120 };
 const P = Object.assign({}, DEFAULTS);
 
 const state = {
@@ -102,9 +103,9 @@ const state = {
     // the blade rises and tilts instead of jumping
     liftShown: DEFAULTS.lift, tiltShown: DEFAULTS.tilt,
     ripShown: DEFAULTS.rip,
-    dust: true, sound: true, trace: false,
+    paused: false,
+    dust: true, sound: true,
     mesh: false, turntable: false, parts: false,
-    guard: true,                      // the guard, riving knife and pawls
     cabinet: true,                    // and the sheet steel over the works
     viewMode: 'blueprint'
 };
@@ -221,11 +222,9 @@ function halfChord() {
 function kickback() {
     if (!state.cutting) return 0;
     let r = 0;
-    if (!state.guard) r += 0.45;                 // no riving knife behind it
     if (state.op === 'rip' && P.rip < 45) r += 0.2;   // hand near the blade
     if (tearing()) r += 0.25 * clamp((chipLoad() - FZ_TEAR) / FZ_TEAR, 0, 1);
     if (overloaded()) r += 0.3;
-    if (state.op === 'crosscut' && state.guard === false) r += 0.15;
     return clamp(r, 0, 1);
 }
 
@@ -307,10 +306,11 @@ const TABLE_Y = 860;                  // the working height, off the floor
 // The top runs well forward of the cabinet. That overhang is the infeed:
 // it is where the board is supported while you line it up, and without
 // it the timber hangs in mid air over the height wheel.
-const TABLE_X0 = -520, TABLE_X1 = 400; // the cast top, front to back
+const TABLE_X0 = -620, TABLE_X1 = 500; // the cast top, front to back
 const TABLE_Z0 = -330, TABLE_Z1 = 430; // and left to right
 const TABLE_T = 18;                   // the ground web
 const TABLE_RIM = 40;                 // and the rim cast round it
+const midXConst = (TABLE_X0 + TABLE_X1) / 2;
 const SLOT_W = 9;                     // the throat the blade comes up through
 const PLATE_L = 340, PLATE_W = 86;    // the throat plate around it
 const MITER_Z = -170;                 // the miter slot, left of the blade
@@ -321,7 +321,7 @@ const CAB_Y0 = 168, CAB_H = TABLE_Y - TABLE_T - CAB_Y0;
 // the trunnion, so tilting carries it sideways on an arc, and a box
 // sized for the upright position has the motor coming out through the
 // side of it at 45.
-const CAB_X = 560, CAB_Z = 730, CAB_CZ = 35;
+const CAB_X = 700, CAB_Z = 730, CAB_CZ = 35;
 const RAIL_X = TABLE_X0 - 46;         // the front rail the fence rides
 const RAIL_X2 = TABLE_X1 + 30;        // and the one at the back
 const RAIL_Y = TABLE_Y - 44;
@@ -356,6 +356,7 @@ let boardGrp = null, boardWhole = null, boardLeft = null, boardRight = null;
 let voltNeedle = null, ampNeedle = null;
 let shownVolts = 238, shownAmps = 0;
 let dustGrp = null, dust = [];
+let lampMesh = null;
 let gl = false;
 const MAT = {};
 
@@ -453,6 +454,33 @@ function woodTexture(key, along) {
     return t;
 }
 
+// The maker's name, cast into the table the way it is on a real top:
+// raised letters in the iron, not a printed label. It is drawn light on
+// transparent so it sits on the cast surface rather than as a panel
+// stuck to it.
+function brandTexture() {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 256;
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, 1024, 256);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    // a shadow under the letters and a highlight above, which is what
+    // makes raised lettering read as raised
+    g.font = 'bold 150px Inter, system-ui, sans-serif';
+    g.fillStyle = 'rgba(0,0,0,0.34)';
+    g.fillText('TCE LAB', 512 + 4, 100 + 5);
+    g.fillStyle = 'rgba(255,255,255,0.30)';
+    g.fillText('TCE LAB', 512 - 2, 100 - 3);
+    g.fillStyle = 'rgba(226,232,240,0.44)';
+    g.fillText('TCE LAB', 512, 100);
+    g.font = 'bold 44px Inter, system-ui, sans-serif';
+    g.fillStyle = 'rgba(0,0,0,0.28)';
+    g.fillText('305 mm  ·  3450 rpm', 512 + 2, 196 + 3);
+    g.fillStyle = 'rgba(226,232,240,0.36)';
+    g.fillText('305 mm  ·  3450 rpm', 512, 196);
+    return new THREE.CanvasTexture(c);
+}
+
 // The plate riveted to the rail, telling you how far the fence is off
 // the blade. Every fence carries one; without it the rip width is a
 // guess.
@@ -498,7 +526,7 @@ function platePlateTexture() {
     g.fillText('TCE LAB', 32, 56);
     g.font = 'bold 24px Inter, sans-serif';
     [['MOTOR', '1.8 kW  2.4 HP'], ['SUPPLY', '230 V  1ph  50 Hz'],
-     ['SPEED', '3450 rpm'], ['ARBOR', String(Math.round(freeRpm())) + ' rpm']]
+     ['SPEED', String(MOTOR_RPM) + ' rpm'], ['ARBOR', String(Math.round(freeRpm())) + ' rpm']]
         .forEach((r, i) => {
             g.fillStyle = '#4a5058'; g.fillText(r[0], 32, 96 + i * 36);
             g.fillStyle = '#22262c'; g.fillText(r[1], 190, 96 + i * 36);
@@ -577,15 +605,15 @@ function init3D() {
     // grey for the motor and near-black cast for the pulleys.
     MAT.cast   = new THREE.MeshStandardMaterial({ color: 0xded7c4, roughness: 0.62, metalness: 0.12 });
     MAT.cast2  = new THREE.MeshStandardMaterial({ color: 0xcec6b1, roughness: 0.66, metalness: 0.10 });
-    MAT.top    = new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.96, roughness: 0.10 });
+    MAT.top    = new THREE.MeshStandardMaterial({ color: 0x71787f, metalness: 0.82, roughness: 0.28 });
     MAT.mach   = new THREE.MeshStandardMaterial({ color: 0x8d9299, roughness: 0.34, metalness: 0.62 });
     MAT.steel  = new THREE.MeshStandardMaterial({ color: 0xb9bfc9, metalness: 0.68, roughness: 0.22 });
     MAT.dark   = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.6, metalness: 0.2 });
     MAT.motor  = new THREE.MeshStandardMaterial({ color: 0x3d434c, roughness: 0.44, metalness: 0.46 });
     // The blade plate is ground bright; the teeth brazed onto it are
     // carbide, which is duller and greyer than any steel around it.
-    MAT.plate  = new THREE.MeshStandardMaterial({ color: 0xc6ccd6, metalness: 0.92, roughness: 0.13 });
-    MAT.carbide= new THREE.MeshStandardMaterial({ color: 0x4a4f57, metalness: 0.5, roughness: 0.34 });
+    MAT.plate  = new THREE.MeshStandardMaterial({ color: 0xe8eff7, metalness: 0.97, roughness: 0.06 });
+    MAT.carbide= new THREE.MeshStandardMaterial({ color: 0x2b2f36, metalness: 0.55, roughness: 0.30 });
     MAT.tool   = new THREE.MeshStandardMaterial({ color: 0xd6a933, metalness: 0.78, roughness: 0.28 });
     MAT.tray   = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.7, metalness: 0.16 });
     MAT.handle = new THREE.MeshStandardMaterial({ color: 0x1b1e23, roughness: 0.40, metalness: 0.34 });
@@ -615,10 +643,10 @@ function init3D() {
     MAT.acrylic.envMapIntensity = 1.4;
 
     MAT.cast.envMapIntensity = MAT.cast2.envMapIntensity = 0.24;
-    MAT.top.envMapIntensity = 2.0;
+    MAT.top.envMapIntensity = 1.1;
     MAT.mach.envMapIntensity = 1.3;
     MAT.steel.envMapIntensity = 1.2;
-    MAT.plate.envMapIntensity = 2.1;
+    MAT.plate.envMapIntensity = 2.6;
     MAT.carbide.envMapIntensity = 0.9;
     MAT.tool.envMapIntensity = 1.25;
     MAT.motor.envMapIntensity = 0.8;
@@ -898,6 +926,16 @@ function buildMachine() {
     skirt(20, spanZ * 0.5, -300, TABLE_Z0 + spanZ * 0.26);
     skirt(20, spanZ * 0.5, 300, TABLE_Z0 + spanZ * 0.26);
 
+    // the maker's name, cast into the infeed corner of the top
+    const brand = new THREE.Mesh(new THREE.PlaneGeometry(300, 75),
+        new THREE.MeshStandardMaterial({ map: brandTexture(), transparent: true,
+                                         roughness: 0.55, metalness: 0.3 }));
+    brand.rotation.x = -Math.PI / 2;    // flat on the iron, reading along the
+                                        // feed - the way the timber travels
+    brand.rotation.z = Math.PI;         // and facing out, not back at itself
+    brand.position.set(TABLE_X0 + 220, TABLE_Y + 0.6, TABLE_Z0 + 80);
+    scene.add(brand);
+
     // the throat plate: a drop-in insert with the blade slot through it,
     // in two halves either side of the slot
     throatPlate = new THREE.Group(); scene.add(throatPlate);
@@ -983,21 +1021,19 @@ function buildMachine() {
     bladeGrp = new THREE.Group();
     arborGrp.add(bladeGrp);
 
-    // the plate, and the teeth brazed round its rim
-    bladeMesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(BLADE_R - 5, BLADE_R - 5, PLATE_T, 64), MAT.plate);
-    bladeMesh.rotation.x = Math.PI / 2;
+    // The plate, cut with real teeth and real gullets.
+    //
+    // Drawn as a plain disc with little blocks stuck round the rim, it
+    // read as a wheel with studs in it. A saw blade is not that shape:
+    // between one tooth and the next the steel is scooped away into a
+    // gullet, and that gullet is not decoration either - it is the space
+    // the chip has to sit in until it comes back out of the cut, which
+    // is the whole reason a rip blade has fewer, bigger teeth than a
+    // crosscut one. So the plate is extruded from a profile that has the
+    // teeth and the gullets in it, and the carbide is brazed on top.
+    bladeMesh = new THREE.Mesh(bladePlate(teeth()), MAT.plate);
     bladeMesh.castShadow = true;
     bladeGrp.add(bladeMesh);
-    // the expansion slots — every blade has them, and they are what stops
-    // a hot blade from buckling into an S and wandering out of the cut
-    for (let k = 0; k < 4; k++) {
-        const a = k / 4 * Math.PI * 2 + 0.4;
-        const s = new THREE.Mesh(roundedBox(2.6, 34, PLATE_T + 0.4, 1), MAT.dark);
-        s.position.set(Math.cos(a) * (BLADE_R - 40), Math.sin(a) * (BLADE_R - 40), 0);
-        s.rotation.z = a - Math.PI / 2;
-        bladeGrp.add(s);
-    }
     buildTeeth();
     // the arbor flange and the nut that holds it all on
     const flange = new THREE.Mesh(new THREE.CylinderGeometry(30, 30, 9, 22), MAT.mach);
@@ -1218,36 +1254,36 @@ function buildMachine() {
     // The rail is the datum the fence measures from, which is why it is
     // a ground steel tube and not a piece of angle: the fence has to
     // land in the same place every time it is moved.
-    const railGeo = new THREE.Mesh(roundedBox(56, 46, spanZ + 330, 4), MAT.mach);
-    railGeo.position.set(RAIL_X, RAIL_Y, midZ + 60);
+    const railGeo = new THREE.Mesh(roundedBox(56, 46, spanZ, 4), MAT.mach);
+    railGeo.position.set(RAIL_X, RAIL_Y, midZ);
     railGeo.castShadow = true; scene.add(railGeo);
-    const rail2 = new THREE.Mesh(roundedBox(44, 36, spanZ + 330, 4), MAT.mach);
-    rail2.position.set(RAIL_X2, RAIL_Y, midZ + 60);
+    const rail2 = new THREE.Mesh(roundedBox(44, 36, spanZ, 4), MAT.mach);
+    rail2.position.set(RAIL_X2, RAIL_Y, midZ);
     rail2.castShadow = true; scene.add(rail2);
     // the scale, read against a cursor on the fence head
-    const RULE_W = spanZ + 300, RULE_H = 34;
+    const RULE_W = spanZ - 20, RULE_H = 34;
     const scale = new THREE.Mesh(new THREE.PlaneGeometry(RULE_W, RULE_H),
         new THREE.MeshStandardMaterial({ map: scaleTexture(RULE_W, RULE_H, 320),
                                          roughness: 0.6, metalness: 0.05 }));
-    scale.position.set(RAIL_X - 29, RAIL_Y + 2, midZ + 60);
+    scale.position.set(RAIL_X - 29, RAIL_Y + 2, midZ);
     scale.rotation.y = -Math.PI / 2;
     scene.add(scale);
     // and the legs that carry the rail out past the table
     [-1, 1].forEach(s => {
         const leg = new THREE.Mesh(roundedBox(40, 90, 18, 3), MAT.mach);
-        leg.position.set(RAIL_X, RAIL_Y - 60, midZ + 60 + s * (spanZ / 2 + 100));
+        leg.position.set(RAIL_X, RAIL_Y - 60, midZ + s * (spanZ / 2 - 60));
         scene.add(leg);
     });
 
     fenceGrp = new THREE.Group(); scene.add(fenceGrp);
     // the body: an extruded box section standing on the table
-    const fbody = new THREE.Mesh(roundedBox(spanX - 20, 78, 34, 3), MAT.mach);
-    fbody.position.set(20, TABLE_Y + 39, 0);
+    const fbody = new THREE.Mesh(roundedBox(spanX, 78, 34, 3), MAT.mach);
+    fbody.position.set(midX, TABLE_Y + 39, 0);
     fbody.castShadow = true; fenceGrp.add(fbody);
     // the laminate face the timber actually rubs on
-    const fface = new THREE.Mesh(roundedBox(spanX - 24, 70, 6, 1),
+    const fface = new THREE.Mesh(roundedBox(spanX - 4, 70, 6, 1),
         new THREE.MeshStandardMaterial({ color: 0xd9dde3, roughness: 0.42, metalness: 0.05 }));
-    fface.position.set(20, TABLE_Y + 39, -18); fenceGrp.add(fface);
+    fface.position.set(midX, TABLE_Y + 39, -18); fenceGrp.add(fface);
     // the head that clamps it to the front rail, and its lever
     const fhead = new THREE.Mesh(roundedBox(96, 96, 66, 4), MAT.mach);
     fhead.position.set(RAIL_X + 8, RAIL_Y + 18, 0);
@@ -1281,41 +1317,41 @@ function buildMachine() {
     // It sits in the kerf behind the blade, the same thickness as the
     // plate and thinner than the teeth, and it holds the cut open so the
     // timber cannot close on the back of the blade and be thrown.
-    guardGrp = new THREE.Group(); tiltGrp.add(guardGrp);
-    knifeMesh = new THREE.Mesh(roundedBox(70, 150, PLATE_T + 0.2, 12), MAT.steel);
-    knifeMesh.position.set(78, -30, 0);
+    // The hood is gone, and with it the switch that took it off. It sat
+    // over the blade, which is exactly where you need to be looking, and
+    // half of what a student came to see was behind it.
+    //
+    // The riving knife stays, and it is NOT the guard. It is a fixed part
+    // of the machine: the same thickness as the plate and thinner than
+    // the teeth, sitting in the kerf right behind the blade so the two
+    // halves of the board cannot close on it. It follows the blade up,
+    // down and over because it is carried on the same cradle.
+    guardGrp = new THREE.Group(); arborGrp.add(guardGrp);
+    // A riving knife is not a rectangle. Its leading edge follows the
+    // blade at a constant few millimetres, so it stays the same distance
+    // behind the teeth at every height the blade is wound to - that
+    // constant gap is the entire trick, and a slab of plate does not
+    // have it. Cut as a profile, it reads as the part it is.
+    const kshape = new THREE.Shape();
+    const KG = 8;                              // the gap it holds off the blade
+    kshape.moveTo(4, -150);
+    kshape.lineTo(74, -150);                   // the trailing edge, straight
+    kshape.lineTo(74, 6);
+    kshape.lineTo(30, 46);                     // the top, swept down behind the blade
+    kshape.lineTo(6, 40);
+    for (let i = 0; i <= 16; i++) {            // and the leading edge, on the arc
+        const a = Math.PI * 0.46 - i / 16 * Math.PI * 0.86;
+        kshape.lineTo(Math.cos(a) * (BLADE_R + KG) - BLADE_R + 4,
+                      Math.sin(a) * (BLADE_R + KG) - 15);
+    }
+    kshape.closePath();
+    knifeMesh = new THREE.Mesh(new THREE.ExtrudeGeometry(kshape, {
+        depth: PLATE_T, bevelEnabled: false, curveSegments: 2
+    }).translate(0, 0, -PLATE_T / 2), MAT.steel);
+    knifeMesh.position.set(BLADE_R - 4, 0, 0);
     knifeMesh.castShadow = true; guardGrp.add(knifeMesh);
-    // The hood hangs off the knife, and it has to be SEEN to hang off it.
-    // Drawn as a box on its own over the blade it reads as a crate
-    // floating in mid air rather than as a guard, so the bracket that
-    // carries it is drawn too - which is also how the real one is made:
-    // the guard is not bolted to the table, it rides on the knife so
-    // that it follows the blade up, down and over.
-    const arm = new THREE.Mesh(roundedBox(16, 96, 10, 3), MAT.steel);
-    arm.position.set(92, 34, 0); arm.castShadow = true; guardGrp.add(arm);
-    const spine = new THREE.Mesh(roundedBox(150, 14, 10, 3), MAT.steel);
-    spine.position.set(24, 78, 0); spine.castShadow = true; guardGrp.add(spine);
-    // and the hood itself: two side plates you look through and a top,
-    // rather than one solid block
-    [-1, 1].forEach(s => {
-        const side = new THREE.Mesh(roundedBox(206, 104, 3, 12), MAT.guard);
-        side.position.set(16, 30, s * 27); guardGrp.add(side);
-    });
-    const top = new THREE.Mesh(roundedBox(206, 3, 54, 3), MAT.guard);
-    top.position.set(16, 80, 0); guardGrp.add(top);
-    // the pawls: teeth that ride over the timber going forward and dig in
-    // if it ever tries to come back
-    [-1, 1].forEach(s => {
-        const pawl = new THREE.Mesh(roundedBox(56, 40, 5, 2), MAT.dark);
-        pawl.position.set(96, -4, s * 22);
-        pawl.rotation.z = -0.55; guardGrp.add(pawl);
-    });
 
     // --- dust extraction ------------------------------------------
-    const chute = new THREE.Mesh(new THREE.CylinderGeometry(52, 52, 90, 20), MAT.tray);
-    chute.rotation.z = Math.PI / 2;
-    chute.position.set(CAB_X / 2 + 40, CAB_Y0 + 110, CAB_CZ);
-    chute.castShadow = true; scene.add(chute);
     const shroud = new THREE.Mesh(roundedBox(210, 160, 130, 8), MAT.tray);
     shroud.position.set(50, -330, -20);
     tiltGrp.add(shroud);
@@ -1331,6 +1367,20 @@ function buildMachine() {
     const paddle = new THREE.Mesh(roundedBox(14, 78, 100, 6), MAT.cast2);
     paddle.position.set(RAIL_X - 62, RAIL_Y - 118, 210);
     paddle.castShadow = true; scene.add(paddle);
+    // The supply lamp. Red the moment the starter is in - because live
+    // and not cutting is the dangerous state, the one where the blade is
+    // still turning and nobody is thinking about it. Green only while it
+    // is actually working, which is when everyone IS thinking about it.
+    MAT.lamp = new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.3,
+                  emissive: 0x000000, emissiveIntensity: 1 });
+    const bezel = new THREE.Mesh(new THREE.CylinderGeometry(23, 23, 12, 20), MAT.mach);
+    bezel.rotation.z = Math.PI / 2;
+    bezel.position.set(RAIL_X - 56, RAIL_Y - 116, 210);
+    bezel.castShadow = true; scene.add(bezel);
+    lampMesh = new THREE.Mesh(new THREE.SphereGeometry(17, 20, 14), MAT.lamp);
+    lampMesh.position.set(RAIL_X - 66, RAIL_Y - 116, 210);
+    scene.add(lampMesh);
+
     const stopBtn = new THREE.Mesh(new THREE.CylinderGeometry(19, 19, 14, 20),
         new THREE.MeshStandardMaterial({ color: 0xb5301f, roughness: 0.4 }));
     stopBtn.rotation.z = Math.PI / 2;
@@ -1406,20 +1456,72 @@ function buildMachine() {
     dustGrp = new THREE.Group(); scene.add(dustGrp);
 }
 
-// The teeth. Drawn as real bodies standing off the rim, because the
-// whole lesson is about how many of them are in the wood and what each
-// one is being asked to take — and you cannot count teeth that are not
-// there.
+// The plate profile: Z teeth, each with a flat top land, a raked face,
+// and a gullet scooped out behind it. Gullet depth goes with the tooth
+// count, because that is how blades are actually made - 24 big teeth
+// need somewhere to put a long rip chip, 80 small ones do not.
+function bladePlate(z) {
+    const step = Math.PI * 2 / z;
+    const GD = clamp(180 / z, 3.5, 11);        // how deep the gullet is cut
+    const Rr = BLADE_R - 9 - GD;               // the gullet root
+    const Rp = BLADE_R - 9;                    // where the carbide sits on
+    const sh = new THREE.Shape();
+    const at = (r, a) => new THREE.Vector2(Math.cos(a) * r, Math.sin(a) * r);
+    let p = at(Rp, 0);
+    sh.moveTo(p.x, p.y);
+    for (let k = 0; k < z; k++) {
+        const a = k * step;
+        // the top land, then the back of the tooth falling away
+        p = at(Rp, a + step * 0.30); sh.lineTo(p.x, p.y);
+        p = at(Rr, a + step * 0.62); sh.lineTo(p.x, p.y);
+        // the gullet floor, rounded rather than a vee - a sharp corner is
+        // where a blade cracks
+        const c = at(Rr, a + step * 0.80);
+        p = at(Rp, a + step * 1.0);
+        sh.quadraticCurveTo(c.x, c.y, p.x, p.y);
+    }
+    sh.closePath();
+    // the arbor hole, and the two expansion slots that stop a hot plate
+    // buckling into an S and wandering out of its own cut
+    const bore = new THREE.Path();
+    bore.absarc(0, 0, 16, 0, Math.PI * 2, true);
+    sh.holes.push(bore);
+    for (let k = 0; k < 3; k++) {
+        const a = k / 3 * Math.PI * 2 + 0.5, sr = Rr - 26;
+        const h = new THREE.Path();
+        const w = 0.030;
+        h.absarc(0, 0, sr, a - w, a + w, false);
+        h.absarc(0, 0, sr - 13, a + w, a - w, true);
+        h.closePath();
+        sh.holes.push(h);
+    }
+    return new THREE.ExtrudeGeometry(sh, {
+        depth: PLATE_T, bevelEnabled: false, curveSegments: 3
+    }).translate(0, 0, -PLATE_T / 2);
+}
+
+// The carbide, brazed onto the top land of every tooth. It is WIDER than
+// the plate, and that difference is the kerf itself - the only reason
+// the plate behind it does not bind in its own cut.
 function buildTeeth() {
     bladeTeeth.forEach(t => bladeGrp.remove(t));
     bladeTeeth = [];
+    if (bladeMesh) {
+        bladeGrp.remove(bladeMesh);
+        bladeMesh.geometry.dispose();
+        bladeMesh = new THREE.Mesh(bladePlate(teeth()), MAT.plate);
+        bladeMesh.castShadow = true;
+        bladeGrp.add(bladeMesh);
+    }
     const z = teeth(), hook = B().hook * Math.PI / 180;
+    const step = Math.PI * 2 / z;
+    const wide = Math.min(step * (BLADE_R - 5) * 0.55, 13);
     for (let k = 0; k < z; k++) {
-        const a = k / z * Math.PI * 2;
-        // a carbide tip is wider than the plate: that difference IS the
-        // kerf, and it is the only reason the plate does not bind
-        const t = new THREE.Mesh(roundedBox(z > 60 ? 7 : 12, 9, KERF, 1), MAT.carbide);
-        t.position.set(Math.cos(a) * (BLADE_R - 4), Math.sin(a) * (BLADE_R - 4), 0);
+        const a = k * step + step * 0.15;
+        const t = new THREE.Mesh(roundedBox(wide, 10, KERF, 0.6), MAT.carbide);
+        t.position.set(Math.cos(a) * (BLADE_R - 4.5), Math.sin(a) * (BLADE_R - 4.5), 0);
+        // the hook: the face leans forward into the cut, and a rip blade
+        // leans a lot further than a crosscut one
         t.rotation.z = a + Math.PI / 2 - hook;
         bladeGrp.add(t); bladeTeeth.push(t);
     }
@@ -1685,6 +1787,7 @@ function startCut() {
         return;
     }
     state.running = true;
+    state.paused = false;
 }
 
 function step(dt) {
@@ -1857,7 +1960,7 @@ function update3D() {
             ? clamp(state.fed - 180, -260, 420) : -260;
     }
 
-    if (guardGrp) guardGrp.visible = state.guard;
+    if (guardGrp) guardGrp.visible = true;
     cabSkins.forEach(m => { m.visible = state.cabinet; });
     if (throatPlate) throatPlate.visible = true;
 
@@ -1929,8 +2032,6 @@ function resizeView() {
     const r = $('view3d').getBoundingClientRect();
     const w = Math.max(1, r.width), h = Math.max(1, r.height);
     if (gl) { camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); }
-    const gc = $('graph');
-    if (gc) { gc.width = 300; gc.height = 150; drawGraph(); }
 }
 window.addEventListener('resize', resizeView);
 
@@ -1963,7 +2064,7 @@ function updateStats() {
     $('lbl-proj').textContent = projection().toFixed(0);
 
     paintAlarm();
-    drawGraph();
+    paintLamp();
 }
 
 const ALARMS = {
@@ -1999,9 +2100,9 @@ function paintAlarm() {
     const fz = chipLoad();
     if (state.kickRisk > 0.55) {
         setAlarm('danger', 'Kickback risk.',
-            !state.guard ? 'The riving knife is off. Nothing is holding the kerf open behind '
-                         + 'the blade, and a board that closes on it will be thrown back at you.'
-                         : 'The cut is loaded hard enough to snatch. Ease the feed.');
+            'The cut is loaded hard enough to snatch. Ease the feed, or take less '
+            + 'depth - the riving knife holds the kerf open but it cannot stop a '
+            + 'board being driven faster than the teeth can clear it.');
     } else if (state.cutting && overloaded()) {
         setAlarm('danger', 'Bogging down.',
             'This cut wants ' + Math.round(cutPower()) + ' W and the motor has '
@@ -2017,6 +2118,8 @@ function paintAlarm() {
             + 'more teeth in the cut.');
     } else if (state.power && projection() <= 0.5) {
         setAlarm('info', 'Blade below the table.', 'Wind the height wheel up.');
+    } else if (state.paused) {
+        setAlarm('warn', 'Paused.', 'Nothing is moving. Press Resume to carry on.');
     } else if (state.done) {
         setAlarm('info', 'Cut finished.', 'Reset to lay a fresh board on.');
     } else if (!state.power) {
@@ -2026,57 +2129,6 @@ function paintAlarm() {
     }
 }
 
-// Chip load against feed rate, for the blade that is on the arbor. The
-// whole lesson in one line: the band that works is narrow, and which
-// part of the feed range lands inside it depends entirely on how many
-// teeth you fitted.
-function drawGraph() {
-    const c = $('graph');
-    if (!c || c.classList.contains('hidden')) return;
-    const g = c.getContext('2d'), W = c.width, H = c.height;
-    const dark = state.viewMode === 'blueprint';
-    g.fillStyle = dark ? '#0f172a' : '#ffffff'; g.fillRect(0, 0, W, H);
-    const L = 34, R = 8, T = 10, Bm = 22;
-    const FMAX = 140, ZMAX = 0.09;
-    const px = f => L + f / FMAX * (W - L - R);
-    const py = z => H - Bm - z / ZMAX * (H - T - Bm);
-
-    // the band that works, drawn as a band
-    g.fillStyle = dark ? 'rgba(16,185,129,0.16)' : 'rgba(16,185,129,0.13)';
-    g.fillRect(L, py(FZ_TEAR), W - L - R, py(FZ_RUB) - py(FZ_TEAR));
-    g.strokeStyle = dark ? '#334155' : '#cbd5e1'; g.lineWidth = 1;
-    g.beginPath(); g.moveTo(L, T); g.lineTo(L, H - Bm); g.lineTo(W - R, H - Bm); g.stroke();
-
-    // one line per blade, so the three can be compared at a glance
-    const rpmNow = state.rpm > 100 ? state.rpm : freeRpm();
-    BLADES.forEach((bl, i) => {
-        g.strokeStyle = i === state.blade ? '#0ea5e9'
-                      : (dark ? '#475569' : '#cbd5e1');
-        g.lineWidth = i === state.blade ? 2.4 : 1.2;
-        g.beginPath();
-        for (let f = 0; f <= FMAX; f += 4) {
-            const z = f / (rpmNow / 60 * bl.z);
-            const x = px(f), y = py(Math.min(z, ZMAX));
-            f === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
-        }
-        g.stroke();
-    });
-
-    // where the saw is set right now
-    const fz = Math.min(chipLoad(), ZMAX);
-    g.fillStyle = fz < FZ_RUB || fz > FZ_TEAR ? '#e11d48' : '#10b981';
-    g.beginPath(); g.arc(px(Math.min(P.feed, FMAX)), py(fz), 4.6, 0, 7); g.fill();
-
-    g.fillStyle = dark ? '#94a3b8' : '#64748b';
-    g.font = '9px Inter, sans-serif'; g.textAlign = 'center';
-    g.fillText('feed  mm/s', (L + W - R) / 2, H - 6);
-    g.save(); g.translate(10, (T + H - Bm) / 2); g.rotate(-Math.PI / 2);
-    g.fillText('chip load  mm/tooth', 0, 0); g.restore();
-    g.textAlign = 'right';
-    g.fillText(String(ZMAX), L - 3, T + 8);
-    g.fillText('0', L - 3, H - Bm);
-}
-
 // =============================================================
 //  Sound
 // =============================================================
@@ -2084,30 +2136,54 @@ let aMotor = null, aCut = null, aPlace = null;
 function initAudio() {
     aMotor = $('a-motor'); aCut = $('a-cut'); aPlace = $('a-place');
 }
-function loopOn(el, vol, rate) {
+// A looping sound is FADED, never paused.
+//
+// Pausing and playing again is what made the motor cut out mid-spin: the
+// element stops, and the next play() restarts the buffer, so every time
+// the volume passed through the threshold the loop began again with an
+// audible seam. Worse, a paused element loses its place, so the loop
+// point moved around and the gap landed somewhere different each time.
+//
+// Kept running with the volume taken to zero, the loop never breaks and
+// the seam never happens. It is only paused when it has been silent for
+// a while, which nobody can hear.
+const FADE = 6;                       // volume units a second, roughly
+function loopOn(el, vol, rate, dt) {
     if (!el) return;
-    el.volume = clamp(vol, 0, 1);
-    el.playbackRate = clamp(rate || 1, 0.5, 2.4);
-    if (el.paused) el.play().catch(() => {});
+    const want = clamp(vol, 0, 1);
+    const k = Math.min(1, (dt || 0.016) * FADE);
+    el.volume = clamp(el.volume + (want - el.volume) * k, 0, 1);
+    // the rate is eased too: stepping it frame to frame is a pitch jump
+    const wr = clamp(rate || 1, 0.5, 2.4);
+    el.playbackRate = clamp(el.playbackRate + (wr - el.playbackRate) * k, 0.5, 2.4);
+    if (el.paused && el.volume > 0.001) el.play().catch(() => {});
 }
-function loopOff(el) { if (el && !el.paused) { try { el.pause(); } catch (e) {} } }
+function loopFade(el, dt) {
+    if (!el || el.paused) return;
+    const k = Math.min(1, (dt || 0.016) * FADE);
+    el.volume = clamp(el.volume * (1 - k), 0, 1);
+    if (el.volume < 0.004) { try { el.pause(); } catch (e) {} }
+}
+function loopOff(el) {
+    if (el && !el.paused) { try { el.pause(); el.volume = 0; } catch (e) {} }
+}
 function cue(el) {
     if (!el || !state.sound) return;
     try { el.currentTime = 0; } catch (e) {}
     el.volume = 0.5; el.play().catch(() => {});
 }
-function soundUpdate() {
+function soundUpdate(dt) {
     if (!aMotor) return;
     const f = state.rpm / Math.max(1, freeRpm());
     if (state.sound && f > 0.02) {
         // the note falls with the blade when the cut loads it, which is
         // the sound every woodworker listens for
-        loopOn(aMotor, 0.10 + 0.16 * f, 0.72 + 0.62 * f);
-    } else loopOff(aMotor);
+        loopOn(aMotor, 0.10 + 0.16 * f, 0.72 + 0.62 * f, dt);
+    } else loopFade(aMotor, dt);
 
     if (state.sound && state.cutting && state.cutIdle < 0.2) {
-        loopOn(aCut, 0.16 + 0.3 * clamp(loadFrac(), 0, 1), 0.9 + 0.35 * f);
-    } else loopOff(aCut);
+        loopOn(aCut, 0.16 + 0.3 * clamp(loadFrac(), 0, 1), 0.9 + 0.35 * f, dt);
+    } else loopFade(aCut, dt);
 }
 function soundStop() { [aMotor, aCut].forEach(loopOff); }
 
@@ -2119,11 +2195,15 @@ let last = performance.now(), acc = 0;
 function frame(now) {
     const real = Math.min((now - last) / 1000, 0.05); last = now;
     advanceCamera(real);
-    acc += real;
-    let guard = 0;
-    while (acc >= DT && guard++ < 400) { step(DT); acc -= DT; }
+    // Paused freezes the machine but not the camera: the point of
+    // stopping it is to go and look, so orbiting has to keep working.
+    if (!state.paused) {
+        acc += real;
+        let guard = 0;
+        while (acc >= DT && guard++ < 400) { step(DT); acc -= DT; }
+    } else acc = 0;
     if (controls) controls.update();
-    soundUpdate();
+    soundUpdate(real);
     updateStats();
     update3D();
     requestAnimationFrame(frame);
@@ -2181,25 +2261,21 @@ const PARTS = [
     { n: 'Swivel caster',  pri: 5, p: () => new THREE.Vector3(
             -(CAB_X / 2 - 10) - 26, 62, CAB_CZ - (CAB_Z / 2 - 10)) },
     { n: 'Rip fence',      pri: 9, p: () => fenceGrp && fenceGrp.visible
-            ? fenceGrp.localToWorld(new THREE.Vector3(20, TABLE_Y + 78, 0)) : null },
-    { n: 'Fence rail',     pri: 8, p: () => new THREE.Vector3(RAIL_X, RAIL_Y + 24, 300) },
-    { n: 'Rear rail',      pri: 4, p: () => new THREE.Vector3(RAIL_X2, RAIL_Y + 18, 300) },
+            ? fenceGrp.localToWorld(new THREE.Vector3(midXConst, TABLE_Y + 78, 0)) : null },
+    { n: 'Fence rail',     pri: 8, p: () => new THREE.Vector3(RAIL_X, RAIL_Y + 24, 240) },
+    { n: 'Rear rail',      pri: 4, p: () => new THREE.Vector3(RAIL_X2, RAIL_Y + 18, 240) },
     { n: 'Rip scale',      pri: 3, p: () => new THREE.Vector3(RAIL_X - 30, RAIL_Y + 8, 130) },
     { n: 'Miter gauge',    pri: 8, p: () => miterGrp && miterGrp.visible
             ? miterGrp.localToWorld(new THREE.Vector3(-40, TABLE_Y + 62, MITER_Z + 60)) : null },
-    { n: 'Blade guard',    pri: 6, p: () => state.guard && tiltGrp
-            ? tiltGrp.localToWorld(new THREE.Vector3(16, -(BLADE_R - state.liftShown) + 80, 0))
-            : null },
-    { n: 'Riving knife',   pri: 9, p: () => state.guard && tiltGrp
-            ? tiltGrp.localToWorld(new THREE.Vector3(78, -(BLADE_R - state.liftShown) - 30, 0))
-            : null },
-    { n: 'Anti-kickback pawls', pri: 5, p: () => state.guard && tiltGrp
-            ? tiltGrp.localToWorld(new THREE.Vector3(96, -(BLADE_R - state.liftShown) - 4, 24))
-            : null },
+    { n: 'Riving knife',   pri: 9, p: () => arborGrp
+            ? arborGrp.localToWorld(new THREE.Vector3(BLADE_R + 40, 30, 0)) : null },
     { n: 'Magnetic starter', pri: 7, p: () => new THREE.Vector3(RAIL_X - 46, RAIL_Y - 96, 210) },
     { n: 'Panel meters',   pri: 4, p: () => new THREE.Vector3(RAIL_X - 60, RAIL_Y - 62, 210) },
+    { n: 'Supply lamp',    pri: 6, p: () => lampMesh
+            ? lampMesh.getWorldPosition(new THREE.Vector3()) : null },
     { n: 'Supply cord',    pri: 3, p: () => new THREE.Vector3(RAIL_X - 90, 40, 330) },
-    { n: 'Dust port',      pri: 5, p: () => new THREE.Vector3(CAB_X / 2 + 70, CAB_Y0 + 90, 30) },
+    { n: 'Dust shroud',    pri: 5, p: () => tiltGrp
+            ? tiltGrp.localToWorld(new THREE.Vector3(50, -330, -20)) : null },
     { n: 'Cabinet',        pri: 5, p: () => state.cabinet
             ? new THREE.Vector3(-CAB_X / 2 - 10, CAB_Y0 + CAB_H * 0.45, 180) : null },
     { n: 'Workpiece',      pri: 10, p: () => boardGrp && boardGrp.visible && boardWhole.visible
@@ -2339,11 +2415,27 @@ document.querySelectorAll('.vseg').forEach(b => b.addEventListener('click', () =
 
 $('btn-power').addEventListener('click', () => {
     state.power = !state.power;
-    if (!state.power) { state.running = false; soundStop(); }
+    // no soundStop here: the blade coasts for seconds after the switch
+    // and the motor loop has to fade with it, not be cut and restarted
+    if (!state.power) { state.running = false; }
     paintRun();
 });
 $('btn-start').addEventListener('click', () => { startCut(); paintRun(); });
-$('btn-stop').addEventListener('click', () => { state.running = false; paintRun(); });
+// Hold stops the FEED, not the blade - which is what a hand coming off
+// the timber does. It always worked; what it did not do was say so, and
+// a control that changes nothing you can see is a control that is not
+// working as far as anyone using it is concerned. Now the board stops
+// with a line to explain why it has.
+$('btn-stop').addEventListener('click', () => {
+    state.paused = !state.paused;
+    if (state.paused) {
+        flash('Paused.', 'The whole machine is stopped where it stands - blade, feed '
+                       + 'and all. Turn the model round and look at the cut, then '
+                       + 'press Resume.');
+        soundStop();
+    }
+    paintRun();
+});
 $('btn-reset').addEventListener('click', () => { resetAll(); paintRun(); });
 
 function paintRun() {
@@ -2358,6 +2450,35 @@ function paintRun() {
     s.disabled = !state.power || state.running;
     s.classList.toggle('opacity-40', s.disabled);
     s.classList.toggle('cursor-not-allowed', s.disabled);
+    // and it reads as paused while it is
+    const h = $('btn-stop'), on = state.paused;
+    h.classList.toggle('bg-amber-500', on);
+    h.classList.toggle('text-white', on);
+    h.classList.toggle('border-amber-600', on);
+    h.classList.toggle('bg-white', !on);
+    $('txt-hold').textContent = on ? 'Resume' : 'Pause';
+}
+
+// The supply lamp, the way the lathe carries one. Three states and they
+// are not decoration: off is no supply, amber is live but not cutting -
+// the state people forget the blade is still turning in - and green is
+// actually working. The blade coasts for seconds after the switch, and
+// the lamp is what says so.
+function paintLamp() {
+    if (!MAT.lamp) return;
+    const spinning = state.rpm > 60;
+    if (state.cutting) {                      // working
+        MAT.lamp.color.setHex(0x1c8f4a);
+        MAT.lamp.emissive.setHex(0x22c55e);
+        MAT.lamp.emissiveIntensity = 1.6;
+    } else if (state.power || spinning) {     // live - and that is the warning
+        MAT.lamp.color.setHex(0x8f1c1c);
+        MAT.lamp.emissive.setHex(0xef4444);
+        MAT.lamp.emissiveIntensity = 1.4;
+    } else {                                  // dead
+        MAT.lamp.color.setHex(0x2b3038);
+        MAT.lamp.emissive.setHex(0x000000);
+    }
 }
 
 function paintChip(chip, on) {
@@ -2378,23 +2499,18 @@ function bindChip(id, key, after) {
 }
 bindChip('dust', 'dust', () => { if (!state.dust) clearDust(); });
 bindChip('sound', 'sound', () => { if (!state.sound) soundStop(); });
-bindChip('guard', 'guard');
 bindChip('cabinet', 'cabinet');
 bindChip('mesh', 'mesh', applyMesh);
 bindChip('spin', 'turntable');
 bindChip('parts', 'parts', () => {
     $('parts').classList.toggle('hidden', !state.parts);
 });
-bindChip('graph', 'trace', () => {
-    $('graph').classList.toggle('hidden', !state.trace);
-    drawGraph();
-});
 const vm = $('chk-view-mode');
 if (vm) vm.addEventListener('change', () => {
     state.viewMode = vm.checked ? 'blueprint' : 'light';
     $('txt-view-mode').textContent = vm.checked ? 'Dark' : 'Light';
     paintChip($('chip-view-mode'), vm.checked);
-    applyTheme(); drawGraph();
+    applyTheme();
 });
 
 // the info sheet

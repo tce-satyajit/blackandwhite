@@ -31,12 +31,12 @@ see exactly where you changed it.
 
 | | |
 |---|---|
-| Motor | 1.8 kW induction, 3450 rpm, 1656 W at the arbor after the belt |
-| Drive | Toothed belt, 19T motor to 16T arbor — the arbor is geared **up** to 4097 rpm |
-| Blade | 254 mm, 3.2 mm kerf, 24T rip / 40T combination / 80T crosscut |
+| Motor | 1.8 kW four-pole induction, 1725 rpm, 1656 W at the arbor after the belt |
+| Drive | Toothed belt, 40T motor to 20T arbor — a 2:1 step **up**, 1725 rpm in, 3450 out |
+| Blade | 305 mm, 3.2 mm kerf, 24T rip / 40T combination / 80T crosscut |
 | Timbers | Pine 22, MDF 38, plywood 45, oak 60 N/mm² specific cutting force |
 | Teeth in cut | from the engagement arc, so blade height and stock thickness both change it |
-| Bevel | `projection = h cos β` — 79 mm at 90° gives 56 mm at 45°, which is what a real 10" saw is sold as cutting |
+| Bevel | `projection = h cos β` — 98 mm at 90° gives 69 mm at 45°, which is what a real 12" saw is sold as cutting |
 
 ## The assembly
 
@@ -46,6 +46,9 @@ trains stay where they are, because the skins carry no load.
 
 - **Height**: wheel → splined shaft on a universal joint → bevel pair →
   elevation screw → carriage nut → arbor. 6 mm of blade per turn of the wheel.
+- The blade **guard** is not fitted, so the blade and the cut are visible. The
+  **riving knife** is, and stays: it is a different part, and the one that
+  stops a closing kerf gripping the back of the blade.
 - **Tilt**: wheel → shaft → worm → toothed quadrant on the cradle. A worm
   because it cannot be driven backwards, and the weight of the motor hanging
   off the trunnion would otherwise wind the blade back to square.

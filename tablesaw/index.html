@@ -94,10 +94,6 @@
                     <b id="alarm-title"></b> <span id="alarm-body" class="opacity-90"></span>
                 </div>
 
-                <!-- Chip load against feed, for all three blades at once.
-                     The lesson in one picture. -->
-                <canvas id="graph" width="300" height="150"
-                        class="hidden absolute bottom-3 right-3 z-10 rounded-xl border border-slate-300 shadow-md"></canvas>
             </div>
 
             <div id="panel">
@@ -123,8 +119,8 @@
                             <label for="s-lift" class="font-semibold text-slate-700" title="The height wheel on the front of the cabinet. It winds the whole arbor assembly up and down on the elevation screw. Standing the blade higher puts more teeth in the cut.">Blade height</label>
                             <span class="mono text-slate-900 font-bold"><span id="v-lift">40</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
                         </div>
-                        <input id="s-lift" type="range" min="0" max="79" step="1" value="40" class="w-full">
-                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0 down</span><span>proj <span id="lbl-proj">40</span></span><span>79 max</span></div>
+                        <input id="s-lift" type="range" min="0" max="98" step="1" value="52" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0 down</span><span>proj <span id="lbl-proj">40</span></span><span>98 max</span></div>
                     </div>
                     <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
                         <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
@@ -204,8 +200,8 @@
                     <button id="btn-start" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-700 text-white border-slate-900 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5" title="Feed the board through.">
                         <i class="fa-solid fa-arrow-right"></i><span>Feed</span>
                     </button>
-                    <button id="btn-stop" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-pause"></i><span>Hold</span>
+                    <button id="btn-stop" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5" title="Freeze the machine where it stands - blade, feed and dust - so you can turn the model round and look at the cut. Press again to carry on.">
+                        <i class="fa-solid fa-pause"></i><span id="txt-hold">Pause</span>
                     </button>
                     <button id="btn-reset" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5" title="Lay a fresh board on the table.">
                         <i class="fa-solid fa-rotate-left"></i><span>Reset</span>
@@ -218,12 +214,6 @@
                     </label>
                     <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Sound: the note falls when the cut loads the blade, which is what you listen for at a real saw.">
                         <input id="chk-sound" type="checkbox" class="accent-slate-900" checked><span>Sound</span>
-                    </label>
-                    <label id="chip-graph" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Chip load against feed rate, one line per blade. The green band is the range that actually cuts.">
-                        <input id="chk-graph" type="checkbox" class="accent-slate-900"><span>Graph</span>
-                    </label>
-                    <label id="chip-guard" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="The guard, the riving knife and the anti-kickback pawls. Take them off to see the blade with nothing in the way - which on a real saw is how people get hurt.">
-                        <input id="chk-guard" type="checkbox" class="accent-slate-900" checked><span>Guard</span>
                     </label>
                     <label id="chip-cabinet" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="The sheet steel round the base. Take it off to see the motor, the belt, both pulleys and the trunnion the whole lot hangs from.">
                         <input id="chk-cabinet" type="checkbox" class="accent-slate-900" checked><span>Cabinet</span>
@@ -274,7 +264,7 @@
                         <li><span class="mono">f<sub>z</sub> = v<sub>f</sub> &divide; (n &times; Z)</span> &mdash; feed rate, divided by how many teeth come round in that time.</li>
                         <li><b>Under about 0.012 mm a tooth</b> the edge cannot get under the fibres. It stops cutting and starts rubbing, and rubbing timber at fifty metres a second sets fire to it. That is what a burn mark is: not a blunt blade, a <b>slow</b> one.</li>
                         <li><b>Over about 0.055 mm</b> the tooth takes more than its gullet can carry out. The chip packs, the edge stops slicing and starts levering, and the top face splinters.</li>
-                        <li>Turn the graph on. The green band is the range that works, and the three lines are the three blades. Notice that <b>no single feed rate is right for all three</b> &mdash; the blade you fit decides which part of the range you have to work in.</li>
+                        <li>The band that works is narrow, and which part of the feed range lands inside it depends entirely on how many teeth you fitted. <b>No single feed rate is right for all three blades</b>.</li>
                     </ul>
                 </section>
 
@@ -302,7 +292,7 @@
                     <ul class="list-disc pl-5 space-y-1">
                         <li>The whole trunnion swings: arbor, motor, belt and blade together. Watch the drive while you tilt it &mdash; the belt goes over with everything else, which is why it never has to change length.</li>
                         <li>The blade pivots about a point on the table line, so the highest tooth is carried round an arc and what is left standing above the table is <span class="mono">h cos &beta;</span>. The projection reading under the height slider falls as you tilt.</li>
-                        <li>Every saw quotes two depths for this reason. Wind it to 79 mm and tilt to 45&deg;: <span class="mono">79 cos 45 = 56 mm</span>, which is the 2-3/16 inch a real 10 inch saw is sold as cutting. It is not a limitation of the motor. It is geometry.</li>
+                        <li>Every saw quotes two depths for this reason. Wind it to 98 mm and tilt to 45&deg;: <span class="mono">98 cos 45 = 69 mm</span>, which is what a real 12 inch saw is sold as cutting. It is not a limitation of the motor. It is geometry.</li>
                     </ul>
                 </section>
 
@@ -331,7 +321,7 @@
                         <li><b>Make it tear.</b> Fit the 24T blade, choose plywood, and feed at 140 mm/s. Then fit the 80T and repeat at the same feed. Same push, same timber, completely different edge.</li>
                         <li><b>Find the ceiling.</b> Oak, 70 mm thick, blade wound right up, 80T blade, brisk feed. Read the power against the 1656 W the motor has, and listen to the arbor speed drop.</li>
                         <li><b>Prove the height rule.</b> Hold everything still and take the blade from just proud of the board to fully up. The chip load does not move a thousandth &mdash; but watch the teeth-in-cut and power readings.</li>
-                        <li><b>Cost of the bevel.</b> Set the height to 79 mm and read the projection. Now tilt to 45&deg; and read it again. Where did the 23 mm go?</li>
+                        <li><b>Cost of the bevel.</b> Set the height to 98 mm and read the projection. Now tilt to 45&deg; and read it again. Where did the 29 mm go?</li>
                     </ul>
                 </section>
 
