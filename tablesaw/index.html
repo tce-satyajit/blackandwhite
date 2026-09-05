@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Table Saw &mdash; How Much Each Tooth Is Asked To Take</title>
+    <!-- Local vendored assets - runs fully offline, no CDN required -->
+    <!-- Watch for a file that never turns up. A <script> or <link> that
+         fails to load does so silently: the page is simply left blank with
+         nothing said. Recording it here, before anything is asked for,
+         lets the check at the foot of the page name what is missing. -->
+    <script>
+        window.__deps = [];
+        addEventListener('error', function (e) {
+            var t = e.target, u = t && (t.src || t.href);
+            if (u && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) window.__deps.push(u);
+        }, true);
+    </script>
+    <script src="vendor/tailwind.js"></script>
+    <script src="vendor/three/three.min.js"></script>
+    <script src="vendor/three/OrbitControls.js"></script>
+    <link href="vendor/fontawesome.css" rel="stylesheet">
+    <link href="vendor/fonts.css" rel="stylesheet">
+    <link rel="stylesheet" href="app.css">
+</head>
+
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none bg-slate-100">
+
+    <div id="loader">
+        <div class="ring"></div>
+        <p class="cap">Loading Table Saw&hellip;</p>
+    </div>
+
+    <!-- The motor runs the whole time the starter is in; the cutting loop
+         lays over it only while the teeth are actually in timber. -->
+    <audio id="a-motor" src="vendor/audio/drill_motor.mp3" preload="auto" loop></audio>
+    <audio id="a-cut" src="vendor/audio/drill_wood.mp3" preload="auto" loop></audio>
+    <audio id="a-place" src="vendor/audio/change_material.mp3" preload="auto"></audio>
+
+    <header class="glass-panel sticky top-0 z-30 px-4 border-b border-slate-200 shrink-0">
+        <div class="max-w-[1800px] mx-auto flex items-center justify-between gap-4 py-2 flex-wrap">
+            <div class="flex items-center gap-3">
+                <div>
+                    <h1 class="text-[calc(19px*var(--fs))] font-black tracking-tight text-slate-900">
+                        Table Saw
+                    </h1>
+                    <p class="text-[calc(14px*var(--fs))] text-slate-500">How much each tooth is asked to take</p>
+                </div>
+            </div>
+
+            <div class="hidden sm:flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 text-[calc(16px*var(--fs))] text-slate-600">
+                <div title="What the arbor is doing. There is no gearbox on a saw - this is one speed, straight off the motor through the belt, and it only ever drops because the cut is pulling it down.">Arbor: <span id="stat-rpm" class="text-sky-600 font-bold">0</span> rpm</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="How fast the teeth are travelling. Fixed, unlike the lathe next door - the blade is one diameter and it never changes.">Rim: <span id="stat-rim" class="text-slate-700 font-bold">0</span> m/s</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="THE number. How much timber one tooth takes on its way through. Under 0.012 mm the teeth rub and burn; over 0.055 they tear.">Chip load: <span id="stat-fz" class="text-emerald-600 font-bold">0</span> mm/t</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="How many teeth are inside the timber at once. Deeper cuts and thicker boards put more of them in, and every one of them adds its own force.">Teeth in: <span id="stat-teeth" class="text-violet-600 font-bold">0</span></div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="What the timber pushes back with, all engaged teeth together. This is the force the fence and your hands are holding against.">Force: <span id="stat-force" class="text-slate-700 font-bold">0</span> N</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="What the cut is asking of the motor, against the 1656 W it actually has after the belt.">Power: <span id="stat-power" class="text-amber-600 font-bold">0</span> W</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div title="How deep the blade is buried in the timber right now.">Depth: <span id="stat-depth" class="text-rose-600 font-bold">0</span> mm</div>
+            </div>
+        </div>
+    </header>
+
+    <main id="main" class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+
+        <div id="stagecard" class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+
+            <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
+                <div id="view3d" class="absolute inset-0"></div>
+
+                <button id="btn-show" title="Show the controls" aria-label="Show the controls"
+                        class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
+                    <i class="fa-solid fa-sliders"></i>
+                </button>
+
+                <!-- Part names, drawn over the machine like a labelled diagram.
+                     The anchors are real points in the scene, so the leaders
+                     follow the blade as it rises and tilts. -->
+                <div id="parts" class="hidden absolute inset-0 z-10 pointer-events-none overflow-hidden">
+                    <svg id="parts-svg" class="absolute inset-0 w-full h-full"></svg>
+                </div>
+
+                <div id="nogl" class="hidden absolute inset-0 z-20 items-center justify-center p-8 text-center">
+                    <p class="text-[calc(14px*var(--fs))] text-slate-600 max-w-md">This browser could not start 3D graphics (WebGL), so the saw cannot be drawn. The readings and controls below still work.</p>
+                </div>
+
+                <!-- Said out loud when the machine will not do what is asked. -->
+                <div id="alarm" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md text-[calc(13px*var(--fs))] text-center max-w-lg">
+                    <b id="alarm-title"></b> <span id="alarm-body" class="opacity-90"></span>
+                </div>
+
+                <!-- Chip load against feed, for all three blades at once.
+                     The lesson in one picture. -->
+                <canvas id="graph" width="300" height="150"
+                        class="hidden absolute bottom-3 right-3 z-10 rounded-xl border border-slate-300 shadow-md"></canvas>
+            </div>
+
+            <div id="panel">
+                <button id="btn-hide" title="Hide the controls (Esc)" aria-label="Hide the controls"
+                        class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </button>
+
+            <div class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col gap-2">
+
+                <!-- Row 1. The five things the saw is set up with. -->
+                <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2 items-start w-full">
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-feed" class="font-semibold text-slate-700" title="How fast the timber is pushed past the blade. This is the only thing in your hands that changes the chip load - everything else about the speed of this machine is fixed.">Feed rate</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-feed">55</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm/s</span></span>
+                        </div>
+                        <input id="s-feed" type="range" min="8" max="140" step="1" value="55" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>8 slow</span><span>v<sub>f</sub></span><span>140 fast</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-lift" class="font-semibold text-slate-700" title="The height wheel on the front of the cabinet. It winds the whole arbor assembly up and down on the elevation screw. Standing the blade higher puts more teeth in the cut.">Blade height</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-lift">40</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
+                        </div>
+                        <input id="s-lift" type="range" min="0" max="79" step="1" value="40" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0 down</span><span>proj <span id="lbl-proj">40</span></span><span>79 max</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-tilt" class="font-semibold text-slate-700" title="The tilt wheel on the side. It swings the whole trunnion over - arbor, motor, belt and all. Watch the projection reading fall as it goes: the blade pivots about the table line, so tilting costs depth of cut.">Blade tilt</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-tilt">0</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">&deg;</span></span>
+                        </div>
+                        <input id="s-tilt" type="range" min="0" max="45" step="1" value="0" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0 square</span><span>&beta;</span><span>45 bevel</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-thick" class="font-semibold text-slate-700" title="How thick the board is. A thicker board buries more of the blade, which puts more teeth in the cut - and every one of them wants its share of the motor.">Stock thickness</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-thick">19</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
+                        </div>
+                        <input id="s-thick" type="range" min="6" max="70" step="1" value="19" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>6 thin</span><span>t</span><span>70 thick</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-rip" class="font-semibold text-slate-700" title="Where the fence is set, measured from the blade. It is the width of the piece you are keeping - and set narrow, it is also how close your hand comes to the teeth.">Rip width</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-rip">120</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">mm</span></span>
+                        </div>
+                        <input id="s-rip" type="range" min="20" max="300" step="5" value="120" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>20 narrow</span><span>w</span><span>300 wide</span></div>
+                    </div>
+                </div>
+
+                <!-- Row 2. What is being cut, how, and with what. -->
+                <div class="flex flex-wrap items-start justify-center gap-2 min-w-0">
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Four timbers with four different appetites for power. Oak takes nearly three times what pine does for the same chip.">Material</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="mseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="pine" title="Softwood. Cuts easily, and scorches easily - resin and a slow feed will mark it every time.">Pine</button>
+                            <button class="mseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="oak" title="Hardwood, and the one that shows you the motor's ceiling. Nearly three times pine's cutting force.">Oak</button>
+                            <button class="mseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="mdf" title="Sawdust and glue, the same in every direction. No grain to tear, but it burns readily and makes the most dust of anything here.">MDF</button>
+                            <button class="mseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-mat="ply" title="Layers glued crosswise. The face veneer splinters if a tooth takes too much, which is the whole argument for a high tooth count.">Ply</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Ripping runs with the grain against the fence. Crosscutting runs across it on the miter gauge. Never both at once.">Operation</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="oseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-op="rip" title="Along the grain, guided by the rip fence.">Rip</button>
+                            <button class="oseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-op="crosscut" title="Across the grain, pushed square by the miter gauge running in the slot.">Crosscut</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Which blade is on the arbor. The tooth count divides the feed up: the same push through the same timber is a different chip load on each of these.">Blade</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="bseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-blade="0" title="24 teeth, deep gullets, aggressive hook. Made to carry a long chip out of a rip cut.">24T rip</button>
+                            <button class="bseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-blade="1" title="40 teeth. The one you leave on the arbor between jobs.">40T combi</button>
+                            <button class="bseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-blade="2" title="80 teeth, low hook. Each takes so little that nothing splinters - but eighty small cuts want more power than twenty-four big ones.">80T cross</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center">View</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="vseg on px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="whole">Whole</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="blade" title="The blade, the teeth and the throat it comes up through.">Blade</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="motor" title="The motor. Turn the cabinet off to see it.">Motor</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="drive" title="Both pulleys and the belt between them.">Drive</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="trunnion" title="The cradle the arbor swings in, and the two wheels that move it.">Trunnion</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="fence" title="The fence and the rail it measures from.">Fence</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="power" title="The starter, the meters and the supply.">Power</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3. The things that make it run, and the overlays. -->
+                <div class="flex items-center justify-center flex-wrap gap-1.5 self-center max-w-full bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm min-w-0">
+                    <button id="btn-power" class="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5" title="The magnetic starter. Press to run; any break in the supply drops it out, so the saw cannot start itself again with someone's hand near the blade.">
+                        <i class="fa-solid fa-power-off"></i><span id="txt-power">Start</span>
+                    </button>
+                    <button id="btn-start" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-700 text-white border-slate-900 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5" title="Feed the board through.">
+                        <i class="fa-solid fa-arrow-right"></i><span>Feed</span>
+                    </button>
+                    <button id="btn-stop" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-pause"></i><span>Hold</span>
+                    </button>
+                    <button id="btn-reset" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5" title="Lay a fresh board on the table.">
+                        <i class="fa-solid fa-rotate-left"></i><span>Reset</span>
+                    </button>
+
+                    <span class="w-px h-5 bg-slate-200"></span>
+
+                    <label id="chip-dust" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show the sawdust the cut throws off - up and forward, which is the way the teeth are travelling at the front of the blade.">
+                        <input id="chk-dust" type="checkbox" class="accent-slate-900" checked><span>Dust</span>
+                    </label>
+                    <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Sound: the note falls when the cut loads the blade, which is what you listen for at a real saw.">
+                        <input id="chk-sound" type="checkbox" class="accent-slate-900" checked><span>Sound</span>
+                    </label>
+                    <label id="chip-graph" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Chip load against feed rate, one line per blade. The green band is the range that actually cuts.">
+                        <input id="chk-graph" type="checkbox" class="accent-slate-900"><span>Graph</span>
+                    </label>
+                    <label id="chip-guard" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="The guard, the riving knife and the anti-kickback pawls. Take them off to see the blade with nothing in the way - which on a real saw is how people get hurt.">
+                        <input id="chk-guard" type="checkbox" class="accent-slate-900" checked><span>Guard</span>
+                    </label>
+                    <label id="chip-cabinet" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="The sheet steel round the base. Take it off to see the motor, the belt, both pulleys and the trunnion the whole lot hangs from.">
+                        <input id="chk-cabinet" type="checkbox" class="accent-slate-900" checked><span>Cabinet</span>
+                    </label>
+                    <label id="chip-parts" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Name every part on the machine itself.">
+                        <input id="chk-parts" type="checkbox" class="accent-slate-900"><span>Parts</span>
+                    </label>
+                    <label id="chip-mesh" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show mesh: draw every surface as the triangles it is really made of.">
+                        <input id="chk-mesh" type="checkbox" class="accent-slate-900"><span>Mesh</span>
+                    </label>
+                    <label id="chip-spin" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none">
+                        <input id="chk-spin" type="checkbox" class="accent-slate-900"><span>Spin</span>
+                    </label>
+                    <label id="chip-view-mode" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Dark: put the saw on a dark ground.">
+                        <input id="chk-view-mode" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer" checked><span><span id="txt-view-mode">Light</span></span>
+                    </label>
+                    <button id="btn-info" class="p-2 w-9 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition" title="Learning outcomes and the physics" aria-label="Learning outcomes">
+                        <i class="fa-solid fa-circle-info"></i>
+                    </button>
+                </div>
+            </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ============================ Learning outcomes ==================== -->
+    <div id="info-modal" class="hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm p-4 sm:p-8 overflow-y-auto">
+        <div class="max-w-3xl mx-auto bg-white rounded-2xl shadow-2xl border border-slate-200">
+            <div class="sticky top-0 bg-white border-b border-slate-200 px-5 py-3 flex items-center justify-between rounded-t-2xl">
+                <h2 class="text-[calc(17px*var(--fs))] font-black text-slate-900">What this machine teaches</h2>
+                <button id="btn-info-close" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 text-[calc(12px*var(--fs))] font-bold">Close</button>
+            </div>
+
+            <div class="px-5 py-4 space-y-4 text-[calc(13px*var(--fs))] text-slate-700 leading-relaxed">
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">1. The opposite case to the lathe</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>On the centre lathe, the diameter under the tool is the thing you are changing, so the cutting speed <b>moves while you work</b>. Nothing you do can hold it still.</li>
+                        <li>A table saw is the other case entirely. One blade, one diameter, one speed: <span class="mono">v = &pi;Dn</span> comes out at about <b>55 m/s at the rim and stays there</b>. There is no gearbox to change it and no reason to want one.</li>
+                        <li>So if the rim speed is fixed, what is left to get wrong? The answer is how the feed is <b>shared out between the teeth</b>.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">2. Chip load: the number that decides everything</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><span class="mono">f<sub>z</sub> = v<sub>f</sub> &divide; (n &times; Z)</span> &mdash; feed rate, divided by how many teeth come round in that time.</li>
+                        <li><b>Under about 0.012 mm a tooth</b> the edge cannot get under the fibres. It stops cutting and starts rubbing, and rubbing timber at fifty metres a second sets fire to it. That is what a burn mark is: not a blunt blade, a <b>slow</b> one.</li>
+                        <li><b>Over about 0.055 mm</b> the tooth takes more than its gullet can carry out. The chip packs, the edge stops slicing and starts levering, and the top face splinters.</li>
+                        <li>Turn the graph on. The green band is the range that works, and the three lines are the three blades. Notice that <b>no single feed rate is right for all three</b> &mdash; the blade you fit decides which part of the range you have to work in.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">3. Why an 80-tooth blade is not simply better</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>More teeth means each takes less, so the cut is cleaner. That much is obvious and it is why a crosscut blade has eighty of them.</li>
+                        <li>But each of those teeth still has to be <b>pushed through timber</b>, and there are more of them in the cut at once. Put the 80T blade in oak, wind the blade high and feed briskly: the power reading climbs and the arbor speed sags.</li>
+                        <li>Worse, at any feed you can manage by hand the 80T blade drops <b>below</b> the rubbing threshold. It is the blade most likely to burn, for exactly the reason it is the blade that cuts cleanest.</li>
+                        <li>That is the whole trade, and it is why a workshop owns more than one blade.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">4. Teeth in the cut, and what the height wheel really does</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>Only the teeth actually <b>inside the timber</b> are cutting. That is a short arc near the front of the blade, and how long it is depends on how far the blade stands above the table and how thick the board is.</li>
+                        <li>Wind the blade higher and the arc gets longer, so more teeth are in the cut, so the force and the power both rise &mdash; even though the chip load per tooth has not changed at all.</li>
+                        <li>This is why the old advice is to set the blade just proud of the timber. It is not only about how much blade is exposed; it is about <b>asking the motor for less</b>.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">5. What the tilt wheel costs you</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The whole trunnion swings: arbor, motor, belt and blade together. Watch the drive while you tilt it &mdash; the belt goes over with everything else, which is why it never has to change length.</li>
+                        <li>The blade pivots about a point on the table line, so the highest tooth is carried round an arc and what is left standing above the table is <span class="mono">h cos &beta;</span>. The projection reading under the height slider falls as you tilt.</li>
+                        <li>Every saw quotes two depths for this reason. Wind it to 79 mm and tilt to 45&deg;: <span class="mono">79 cos 45 = 56 mm</span>, which is the 2-3/16 inch a real 10 inch saw is sold as cutting. It is not a limitation of the motor. It is geometry.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">6. The riving knife, and why it is not optional</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The teeth at the <b>back</b> of the blade are travelling upwards and toward you. If the two halves of the board close on them, the board is picked up and thrown at the operator at rim speed.</li>
+                        <li>The riving knife sits in the kerf right behind the blade, the same thickness as the plate and thinner than the teeth. It physically holds the cut open so it cannot close on the back of the blade.</li>
+                        <li>Turn the guard off and start a cut: the kickback warning appears and stays. That warning is the entire reason the part exists.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">7. Rip and crosscut are different jobs</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Ripping</b> runs with the grain, guided by the fence. The chip comes off as a long fibre, which is why a rip blade has few teeth and deep gullets to carry it.</li>
+                        <li><b>Crosscutting</b> severs the fibres across their length, guided by the miter gauge in the slot. Nothing has to be carried far, but every fibre has to be cut cleanly or it lifts as a splinter.</li>
+                        <li>The fence and the miter gauge are <b>never used together</b> for a through cut: the offcut is trapped between a moving board and a fixed fence, and trapped offcuts are thrown. The operation switch here shows one or the other for exactly that reason.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">8. Try this</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Make it burn.</b> Fit the 80T blade, choose MDF, and feed at 10 mm/s. Watch the cut face behind the blade go brown. Now speed the feed up mid-cut and watch exactly where the mark stops &mdash; the timber records what you did and when.</li>
+                        <li><b>Make it tear.</b> Fit the 24T blade, choose plywood, and feed at 140 mm/s. Then fit the 80T and repeat at the same feed. Same push, same timber, completely different edge.</li>
+                        <li><b>Find the ceiling.</b> Oak, 70 mm thick, blade wound right up, 80T blade, brisk feed. Read the power against the 1656 W the motor has, and listen to the arbor speed drop.</li>
+                        <li><b>Prove the height rule.</b> Hold everything still and take the blade from just proud of the board to fully up. The chip load does not move a thousandth &mdash; but watch the teeth-in-cut and power readings.</li>
+                        <li><b>Cost of the bevel.</b> Set the height to 79 mm and read the projection. Now tilt to 45&deg; and read it again. Where did the 23 mm go?</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">9. What is simplified</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>The cutting force uses one specific-force figure per timber. Real wood varies with moisture, grain direction and where in the tree it came from, and cutting across the grain takes more than cutting along it.</li>
+                        <li>The blade is treated as perfectly flat and true. A real one runs out a few hundredths, which is part of why a kerf is wider than the plate.</li>
+                        <li>Kickback is reported as a risk rather than simulated. A lesson that ends with the workpiece leaving the screen teaches nothing the warning has not already said.</li>
+                        <li>The motor droops smoothly under load. A real induction motor has a torque curve with a knee in it and will stall outright past the far side.</li>
+                    </ul>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <!-- If a vendored file never arrived, say so plainly rather than
+         leaving a blank page with nothing on it. -->
+    <script>
+        window.addEventListener('load', function () {
+            if (!window.__deps || !window.__deps.length) return;
+            var d = document.createElement('div');
+            d.style.cssText = 'position:fixed;inset:auto 12px 12px 12px;z-index:99;padding:10px 14px;'
+                + 'border-radius:12px;background:#b5301f;color:#fff;font:13px Inter,sans-serif';
+            d.textContent = 'These files did not load: ' + window.__deps.join(', ');
+            document.body.appendChild(d);
+        });
+    </script>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,305 @@
+/* ---- Text size in the HTML chrome ------------------------- */
+:root { --fs: 1.15; }
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #f1f5f9;
+    color: #0f172a;
+    overflow-x: hidden;
+}
+.mono { font-family: 'JetBrains Mono', monospace; }
+canvas { touch-action: none; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #e2e8f0; }
+::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+input[type=range] {
+    -webkit-appearance: none;
+    background: #e5e7eb;
+    height: 6px;
+    border-radius: 999px;
+}
+input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 18px; width: 18px; border-radius: 50%;
+    background: #0f172a;
+    border: 2px solid #ffffff;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(15, 23, 42, 0.25);
+    transition: transform 0.1s ease, background-color 0.2s ease;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); background: #334155; }
+input[type=range]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 1px #e5e7eb, 0 0 0 4px rgba(15, 23, 42, 0.18);
+}
+
+/* ---- Loading veil ------------------------------------------- */
+#loader {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    background: #f1f5f9;
+    transition: opacity .35s ease, visibility .35s ease;
+}
+#loader.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+#loader .ring {
+    width: 38px; height: 38px; border-radius: 50%;
+    border: 3px solid #cbd5e1; border-top-color: #0f172a;
+    animation: loaderspin .8s linear infinite;
+}
+#loader .cap {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px; font-weight: 600; letter-spacing: .02em; color: #64748b;
+}
+@keyframes loaderspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #loader .ring { animation-duration: 2.4s; } }
+
+.plab {
+    position: absolute; white-space: nowrap; pointer-events: none;
+    padding: 2px 7px; border-radius: 6px;
+    background: rgba(255,255,255,.94); color: #0f172a;
+    border: 1px solid rgba(234,115,23,.55);
+    box-shadow: 0 1px 4px rgba(0,0,0,.28);
+    font-weight: 700; letter-spacing: .01em;
+    font-size: calc(11px * var(--fs)); line-height: 1.35;
+    transform: translateY(-50%);
+}
+.plab.r { transform: translate(-100%, -50%); }
+
+.mseg.on, .sseg.on, .vseg.on, .bseg.on, .oseg.on, .cseg.on { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+.sseg:disabled { cursor: default; }
+.sseg.dim { opacity: .38; }
+
+.glass-panel {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+}
+
+
+/* ---- The controls float over the view ------------------------
+   The view is always the full size of the window under the header. The
+   control panel is not a slice taken out of it - it sits on top, so
+   hiding it uncovers the model rather than resizing the canvas.
+
+   That is worth doing for more than tidiness: the renderer only has to
+   be told about a size change that actually happens, and toggling the
+   panel is no longer one, so it costs nothing but a transform.
+
+   The header stays either way. It is not chrome in the way the panel is
+   - it is the read-out, and those numbers are exactly what you want in
+   front of you while watching the thing work. */
+#panel {
+    position: absolute;
+    left: 10px; right: 10px; bottom: 10px;
+    z-index: 25;
+    background: #f8fafc9e;
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border-radius: 15px;
+    /* A card floating clear of the frame needs its own edge, or it reads
+       as a smudge on the glass rather than a panel sitting on top of it. */
+    border: 1px solid rgba(226, 232, 240, 0.7);
+    box-shadow: 0 8px 24px -6px rgba(15, 23, 42, 0.25);
+    transition: transform .22s ease, opacity .18s ease;
+}
+body.controls-off #panel {
+    transform: translateY(calc(100% + 14px));
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* ---- The controls, flattened ---------------------------------
+   The panel is already a card floating over the view. Giving every
+   control inside it another card stacks three shades of white on top of
+   the model and reads as a form rather than a control surface - so
+   inside the panel nothing has a fill or a shadow of its own, and
+   everything is set in black.
+
+   The border is the one thing that has to stay. With no edge the groups
+   run into each other and into the model behind them, and the panel
+   stops reading as a set of controls at all - so it is kept, dialled
+   back to a soft black that draws the boundary without the group
+   becoming a card again.
+
+   Two things deliberately keep their fill, because losing it would lose
+   information rather than decoration:
+
+     .bg-slate-900  the pressed state of a button or the selected view -
+                    the only thing saying which one is active;
+     .bg-slate-100  the off state of a chip, which is how an unticked
+                    chip reads as unticked.
+
+   And .text-white is left alone, since it is what sits on those fills. */
+#panel .bg-white { background-color: transparent !important; }
+#panel .border,
+#panel .border-slate-200 { border-color: #00000059 !important; }
+#panel .shadow-sm,
+#panel .shadow { box-shadow: none !important; }
+
+#panel .text-slate-400,
+#panel .text-slate-500,
+#panel .text-slate-600,
+#panel .text-slate-700,
+#panel .text-slate-900,
+#panel label,
+#panel .mono { color: #000 !important; }
+
+/* The selected segment keeps its fill.
+   .mseg/.vseg/.wseg/.sseg/... set it in plain CSS rather than through a
+   utility class, so the transparent-background rule above outranks them
+   - and without this the row of view, model and filament buttons has no
+   way at all of showing which one is selected. Matched on the class
+   containing "seg" so it covers every one of them, including the ones
+   this project has not added yet. */
+#panel [class*="seg"].on,
+#panel .bg-white.on {
+    /* background-color, not the background shorthand: the shorthand also
+       resets background-image, and the utility class it has to beat sets
+       the longhand - so longhand against longhand is the comparison that
+       actually decides this. */
+    background-color: #0f172a !important;
+    color: #ffffff !important;
+}
+
+/* Some of these pages split their controls across two bars. Both are
+   wrapped in #panel, so the bars themselves have to give up the fill and
+   the rule between them - otherwise the floating card has two opaque
+   stripes inside it and the seam still shows. */
+#panel > div {
+    background-color: transparent !important;
+    border-top-color: transparent !important;
+}
+
+/* ---- The two halves of the toggle ----------------------------
+   One button cannot do this job. The one that hides the panel belongs
+   in the panel's own corner, which means it slides away with the panel
+   and cannot be the way back - so the one that brings it back has to
+   live outside the panel, and only appears once the panel has gone. */
+#btn-hide {
+    position: absolute;
+    bottom: 6px; right: 6px;
+    z-index: 30;
+}
+/* Room in the panel's bottom-right corner so the controls do not run
+   under the button. Both buttons are the same size and sit in the same
+   place on screen, so toggling swaps one for the other without anything
+   appearing to move. */
+#panel { padding-right: 44px; }
+
+#btn-show {
+    position: absolute;
+    right: 14px; bottom: 14px;
+    z-index: 30;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+}
+body.controls-off #btn-show {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* ---- The read-out --------------------------------------------
+   Numbers that change every frame, on one row. Two separate things made
+   the row shuffle sideways as they did.
+
+   First, in a proportional face a 1 is narrower than a 0, so the width
+   changes even when the digit count does not. Tabular figures settle
+   that: every digit on the same advance.
+
+   Second, the digit count changes too, and no font feature helps with
+   that. So each field also gets a floor on its width, sized to the
+   widest value it can actually reach, and the number is set against the
+   right so it stays beside its unit and the slack falls after the label.
+
+   Addressed by id rather than a shared class, because updateStats
+   reassigns className on some of these to recolour them on overload -
+   which would wipe a class added here.
+
+   A floor, not a fixed width: an unexpected value still gets its room,
+   it just moves the row when it does. */
+#stat-rpm, #stat-vc, #stat-force, #stat-power, #stat-dia {
+    display: inline-block;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+#stat-rpm   { min-width: 4ch; }   /* up to four digits */
+#stat-vc    { min-width: 5ch; }   /* toFixed(1), e.g. "125.7" */
+#stat-force { min-width: 4ch; }   /* newtons */
+#stat-power { min-width: 4ch; }   /* watts */
+#stat-dia   { min-width: 5ch; }   /* toFixed(1), e.g. "100.0" */
+
+/* ---- The chips lose their pill -------------------------------
+   Each chip already carries a checkbox, and the checkbox already says
+   whether it is on. A filled pill behind it says the same thing twice,
+   and says it in the language of a button that has been pressed rather
+   than a box that has been ticked.
+
+   Both states go, not just one: leaving the off state filled was worse
+   than leaving both, because it read as the on state to anyone who did
+   not look at the box itself. The hover fill goes with them - the label
+   is still a pointer target, and a pill appearing under the cursor is
+   the same button language coming back. */
+#panel [id^="chip-"],
+#panel [id^="chip-"]:hover {
+    background-color: transparent !important;
+    border-color: transparent !important;
+}
+
+/* ---- Portrait ------------------------------------------------
+   On a narrow screen the sliders drop to one column and the chips wrap,
+   so the panel grows until it covers the whole view - 100% of it on the
+   projects with the most controls, which hides the very thing the
+   controls are for.
+
+   So on narrow screens the panel is capped and scrolls instead. The
+   model keeps the top half of the window and the controls become a
+   short scrolling sheet, which is the same bargain a phone makes
+   everywhere else.
+
+   The hide button has to come out of the panel to do it. It is
+   positioned against the panel, and a panel that scrolls would carry it
+   off the bottom of the screen with the rest of the content - so on
+   narrow screens it is pinned to the viewport instead, landing in the
+   same corner the show button uses. */
+@media (max-width: 700px) {
+    #panel {
+        max-height: 46vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        padding-right: 10px;
+    }
+    /* The rows already say flex-wrap: wrap, but shrink-0 stops them
+       shrinking to the panel's width, so they wrap against their own
+       content width instead and hang off the side. Letting them shrink
+       is what makes the wrapping actually happen; min-width: 0 is the
+       other half of it, since a flex item will not shrink below its
+       content unless told it may. */
+    #panel .shrink-0 {
+        flex-shrink: 1 !important;
+        min-width: 0 !important;
+    }
+    #btn-hide,
+    #btn-show {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+    }
+}
+
+/* ---- The info button ------------------------------------------
+   It is the way into the whole explanation behind the simulation, and
+   set at 12px inside a bordered pill it read as a footnote next to
+   controls that are twice its size. The mark carries itself at 24px, so
+   the ring and the padding around it are no longer holding anything up. */
+#btn-info {
+    font-size: 24px;
+    padding: 0;
+    border: 0;
+    line-height: 1;
+}

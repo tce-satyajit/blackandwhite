@@ -20,15 +20,7 @@
       "tag": "Grade 8–10 · Physics",
       "body": "Two rams, a linkage, and a mechanical advantage that will not sit still. Flat on the floor the rams push twenty times the weight they are lifting; near the top, three times. Watch the pressure gauge collapse as it rises — then watch the speed do the opposite, and work out why those are the same fact."
     },
-    {
-      "title": "6-Axis Robot Arm",
-      "modalTitle": "6-Axis Robot Arm",
-      "src": "6axisarm/index.html",
-      "thumb": "6axisarm/thumb.png",
-      "alt": "Industrial robot arm lifting a carton onto a moving conveyor",
-      "tag": "Grade 8–11 · Physics",
-      "body": "An industrial arm picking parts off a table and setting them on a moving belt. Six revolute joints, solved with the cosine rule; watch the shoulder torque climb as the load goes out to arm's length, and find the acceleration that pulls the part off the tool."
-    },
+    
     {
       "title": "3D Printer",
       "modalTitle": "3D Printer Simulator",
@@ -55,6 +47,24 @@
       "alt": "Centre lathe turning a bar down in the chuck",
       "tag": "Grade 8–10 · Physics",
       "body": "The machine where the cutting speed will not stay put. Every pass makes the bar thinner, so the speed the edge sees falls away while you work — and facing to the centre takes it to zero. The companion piece to the bench drill, and it inverts the drill’s lesson: here, spinning faster really does finish the job sooner."
+    },
+    {
+      "title": "6-Axis Robot Arm",
+      "modalTitle": "6-Axis Robot Arm",
+      "src": "6axisarm/index.html",
+      "thumb": "6axisarm/thumb.png",
+      "alt": "Industrial robot arm lifting a carton onto a moving conveyor",
+      "tag": "Grade 8–11 · Physics",
+      "body": "An industrial arm picking parts off a table and setting them on a moving belt. Six revolute joints, solved with the cosine rule; watch the shoulder torque climb as the load goes out to arm's length, and find the acceleration that pulls the part off the tool."
+    },
+    {
+      "title": "Table Saw",
+      "modalTitle": "Table Saw",
+      "src": "tablesaw/index.html",
+      "thumb": "tablesaw/thumb.png",
+      "alt": "Cabinet table saw ripping a board against the fence, blade and guard above the cast top",
+      "tag": "Grade 8–11 · Physics",
+      "body": "The opposite case to the lathe: one blade, one diameter, one speed that never moves. What you can get wrong is how the feed is shared out between the teeth. Too little each and they rub and set the timber alight; too much and they tear it. Take the cabinet off to follow the drive from the motor through the belt to the arbor, and the two wheels through their screws to the blade."
     },
     {
       "title": "Walschaerts Valve Gear",
