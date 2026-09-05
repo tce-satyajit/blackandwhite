@@ -118,6 +118,15 @@
       "alt": "Differential gear 3D model simulation",
       "tag": "Grade 8–11 · Physics",
       "body": "The same physics on a real three-dimensional differential you can turn round and look into. Hold one wheel still and watch the other run at exactly twice the carrier speed."
+    },
+    {
+      "title": "Breadboard",
+      "modalTitle": "Breadboard — Building a Circuit",
+      "src": "breadboard/index.html",
+      "thumb": "breadboard/thumb.png",
+      "alt": "Solderless breadboard with a battery pack, a lit LED and a multimeter reading across it",
+      "tag": "Grade 8–10 · Physics",
+      "body": "A board with 400 holes and only 64 actual connections — and nearly every circuit that will not work is a misunderstanding about which is which. X-ray the plastic to see the metal strips clipped inside, then build the loop: battery, switch, resistor, LED. Take the resistor out and watch how long the LED lasts. Park the meter across a part to read volts, or break the loop to read current."
     }
   ]
 }

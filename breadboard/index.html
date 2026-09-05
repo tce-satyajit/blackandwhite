@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breadboard &mdash; The Hidden Rows and What a Circuit Needs</title>
+    <!-- Local vendored assets - runs fully offline, no CDN required -->
+    <!-- Watch for a file that never turns up. A <script> or <link> that
+         fails to load does so silently: the page is simply left blank with
+         nothing said. Recording it here, before anything is asked for,
+         lets the check at the foot of the page name what is missing. -->
+    <script>
+        window.__deps = [];
+        addEventListener('error', function (e) {
+            var t = e.target, u = t && (t.src || t.href);
+            if (u && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) window.__deps.push(u);
+        }, true);
+    </script>
+    <script src="vendor/tailwind.js"></script>
+    <script src="vendor/three/three.min.js"></script>
+    <script src="vendor/three/OrbitControls.js"></script>
+    <link href="vendor/fontawesome.css" rel="stylesheet">
+    <link href="vendor/fonts.css" rel="stylesheet">
+    <link rel="stylesheet" href="app.css">
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none bg-slate-100">
+
+    <div id="loader">
+        <div class="ring"></div>
+        <p class="cap">Loading Breadboard&hellip;</p>
+    </div>
+
+    <!-- Nothing on this bench makes a noise of its own except the motor
+         and the buzzer, and both of them are tones rather than
+         recordings - so they are generated, not played. See app.js. -->
+
+    <header class="glass-panel sticky top-0 z-30 px-4 border-b border-slate-200 shrink-0">
+        <div class="w-full flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div>
+                    <h1 class="font-bold text-[calc(16px*var(--fs))] text-slate-800 flex items-center gap-2 leading-tight">
+                        Breadboard
+                    </h1>
+                    <p class="text-[calc(14px*var(--fs))] text-slate-500">The hidden rows, and what a circuit actually needs</p>
+                </div>
+            </div>
+
+            <div class="hidden sm:flex flex-wrap justify-end items-center gap-x-3 gap-y-0.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 text-[calc(16px*var(--fs))] text-slate-600">
+                <div class="whitespace-nowrap" title="What the battery's terminals are actually at. It is not the number printed on the cell: the harder you pull, the further it sags.">Supply: <span id="stat-volts" class="stat text-sky-600 font-bold">0.00</span> V</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div class="whitespace-nowrap" title="The current going round the loop. In a series circuit this is the same everywhere - there is nowhere else for it to go.">Current: <span id="stat-amps" class="stat text-emerald-600 font-bold">0.0</span> mA</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div class="whitespace-nowrap" title="Everything the current has to push through, added up round the loop.">Total R: <span id="stat-ohms" class="stat text-violet-600 font-bold">0</span> &Omega;</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div class="whitespace-nowrap" title="Power the battery is giving out. Voltage times current - it turns into light, movement, sound and heat.">Power: <span id="stat-power" class="stat text-amber-600 font-bold">0</span> mW</div>
+                <div class="w-px h-3 bg-slate-300"></div>
+                <div class="whitespace-nowrap" title="What the meter's probes are reading, wherever you have parked them.">Meter: <span id="stat-meter" class="stat text-slate-700 font-bold">&mdash;&mdash;</span></div>
+            </div>
+        </div>
+    </header>
+
+    <main id="main" class="w-full p-1 flex-1 flex flex-col justify-between overflow-hidden gap-1">
+
+        <div id="stagecard" class="relative w-full flex-1 min-h-0 rounded-2xl glass-panel overflow-hidden border border-slate-200 shadow-md flex flex-col">
+
+            <div id="stage" class="w-full flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
+                <div id="view3d" class="absolute inset-0"></div>
+
+                <button id="btn-show" title="Show the controls" aria-label="Show the controls"
+                        class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
+                    <i class="fa-solid fa-sliders"></i>
+                </button>
+
+                <div id="nogl" class="hidden absolute inset-0 z-20 items-center justify-center p-8 text-center">
+                    <p class="text-[calc(14px*var(--fs))] text-slate-600 max-w-md">This browser could not start 3D graphics (WebGL), so the board cannot be drawn. The readings and controls below still work.</p>
+                </div>
+
+                <!-- Said out loud when the circuit does something it should
+                     not, so a dark LED is never just a dark LED: there is
+                     always a reason, and the reason is worth naming. -->
+                <div id="alarm" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-xl border shadow-md text-[calc(13px*var(--fs))] text-center max-w-md">
+                    <b id="alarm-title"></b> <span id="alarm-body" class="opacity-90"></span>
+                </div>
+            </div>
+
+            <!-- Sliders three across the top, the choices under them, the
+                 buttons last: three rows, whatever the window is doing. -->
+            <div id="panel" class="p-2 bg-slate-50/90 border-t border-slate-200 flex flex-col gap-2">
+                <button id="btn-hide" title="Hide the controls (Esc)" aria-label="Hide the controls"
+                        class="w-9 h-9 rounded-full border border-slate-300 bg-white/80 hover:bg-white text-slate-700 shadow transition">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </button>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-start">
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-emf" class="font-semibold text-slate-700" title="How hard the battery pushes. One AA cell is 1.5 V, so these are the packs you actually get: a pair, three, four, or a 9 V block.">Battery</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-emf">6.0</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">V</span></span>
+                        </div>
+                        <input id="s-emf" type="range" min="1.5" max="9" step="1.5" value="6" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>1.5 one cell</span><span>V</span><span>9 block</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-res" class="font-semibold text-slate-700" title="The fixed resistor in the loop. Its job is to decide the current, and the colour bands on it in the model are the real code for whatever value you set.">Resistor</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-res">220</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">&Omega;</span></span>
+                        </div>
+                        <input id="s-res" type="range" min="0" max="12" step="1" value="4" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0 none</span><span>R</span><span>10k</span></div>
+                    </div>
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                        <div class="flex justify-between items-center text-[calc(13px*var(--fs))]">
+                            <label for="s-pot" class="font-semibold text-slate-700" title="The knob. Same job as the resistor, but you can turn it while it is running - which is how you feel Ohm's law rather than just reading it.">Knob</label>
+                            <span class="mono text-slate-900 font-bold"><span id="v-pot">500</span> <span class="text-[calc(10px*var(--fs))] text-slate-500">&Omega;</span></span>
+                        </div>
+                        <input id="s-pot" type="range" min="0" max="100" step="1" value="22" class="w-full">
+                        <div class="flex justify-between text-[calc(9px*var(--fs))] text-slate-500 mono"><span>0 wide open</span><span>&#8635;</span><span>10k shut</span></div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center justify-center gap-2 min-w-0">
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="What is plugged into the board on the far side of the switch.">Circuit</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="cseg on px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-circuit="led" title="One LED and one resistor: the first circuit anybody builds.">LED</button>
+                            <button class="cseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-circuit="two" title="Two LEDs, wired either one after the other or side by side. The difference is the whole lesson.">2 LEDs</button>
+                            <button class="cseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-circuit="motor" title="A small DC motor. It is not a resistor, and it will not behave like one.">Motor</button>
+                            <button class="cseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-circuit="buzzer" title="A buzzer: the same current, turned into a noise instead of a light.">Buzzer</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Only means anything with two LEDs on the board: one loop, or two loops side by side.">Wiring</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="wseg on px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-wiring="series" title="One path. The same current goes through both, and they share the voltage between them.">Series</button>
+                            <button class="wseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-wiring="parallel" title="Two paths. Each gets the full voltage, and the battery has to supply both.">Parallel</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Which of the two is actually wired into the loop.">Limiter</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="lseg on px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-limiter="fixed">Resistor</button>
+                            <button class="lseg px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-limiter="pot">Knob</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center" title="Where the meter's two probes are parked. Voltage is read across a part; current is read by breaking the loop and going through it.">Meter</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="pseg on px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-probe="off">Off</button>
+                            <button class="pseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-probe="batt" title="Across the battery: what the supply is really doing under load.">Battery</button>
+                            <button class="pseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-probe="res" title="Across the resistor: the volts it is using up.">Resistor</button>
+                            <button class="pseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-probe="load" title="Across the LED or the motor: the volts it is using up.">Load</button>
+                            <button class="pseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-probe="amps" title="In the loop, not across it: the meter becomes part of the path.">Current</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div class="text-[calc(11px*var(--fs))] font-semibold text-slate-700 text-center">View</div>
+                        <div class="flex items-center justify-center gap-1">
+                            <button class="vseg on px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="bench">Bench</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="top" title="Straight down on the board, which is the only way to see the rows for what they are.">Top</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="rails" title="Close in on the power rails down the edges.">Rails</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="parts">Parts</button>
+                            <button class="vseg px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-900 text-[calc(11px*var(--fs))] font-bold transition" data-view="meter">Meter</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center justify-center gap-2 min-w-0">
+                    <div class="flex items-center justify-center flex-wrap gap-1.5 bg-white px-2 py-1.5 rounded-xl border border-slate-200 shadow-sm min-w-0">
+                        <button id="btn-run" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-700 text-white border-slate-900 rounded-full border text-[calc(13px*var(--fs))] font-bold tracking-wide transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-power-off"></i><span id="run-label">Close Switch</span>
+                        </button>
+                        <button id="btn-flip" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5" title="Turn the LED round in its holes. It only works one way, and this is the quickest way to find that out.">
+                            <i class="fa-solid fa-right-left"></i><span id="flip-label">Turn LED Round</span>
+                        </button>
+                        <button id="btn-reset" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(13px*var(--fs))] font-medium transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-rotate-left"></i><span>Reset</span>
+                        </button>
+
+                        <span class="w-px h-5 bg-slate-200"></span>
+
+                        <label id="chip-links" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="X-ray the board and show the metal strips clipped inside it. This is the one thing a breadboard never tells you and the one thing you have to know.">
+                            <input id="chk-links" type="checkbox" class="accent-slate-900" checked><span>Links</span>
+                        </label>
+                        <label id="chip-flow" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show the current as beads running round the loop, faster when there is more of it.">
+                            <input id="chk-flow" type="checkbox" class="accent-slate-900" checked><span>Flow</span>
+                        </label>
+                        <label id="chip-labels" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Name the parts where they stand.">
+                            <input id="chk-labels" type="checkbox" class="accent-slate-900"><span>Labels</span>
+                        </label>
+                        <label id="chip-fast" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Fast forward: run at four times speed.">
+                            <input id="chk-fast" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer">
+                            <span>Fast</span>
+                        </label>
+                        <label id="chip-slow" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Slow motion: a quarter speed, to watch the motor wind up.">
+                            <input id="chk-slow" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer">
+                            <span>Slow</span>
+                        </label>
+                        <label id="chip-sound" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="The motor's whine and the buzzer's note, both generated from the current actually flowing.">
+                            <input id="chk-sound" type="checkbox" class="accent-slate-900"><span>Sound</span>
+                        </label>
+                        <label id="chip-mesh" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none" title="Show mesh: draw every surface as the triangles it is really made of.">
+                            <input id="chk-mesh" type="checkbox" class="accent-slate-900"><span>Mesh</span>
+                        </label>
+                        <label id="chip-spin" class="flex items-center gap-1.5 px-2.5 py-2 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer transition text-[calc(13px*var(--fs))] font-medium select-none">
+                            <input id="chk-spin" type="checkbox" class="accent-slate-900"><span>Spin</span>
+                        </label>
+                        <label id="chip-view-mode" class="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-400 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition flex items-center gap-1.5 cursor-pointer" title="Dark: put the bench on a dark ground, which is how a lit LED reads best.">
+                            <input id="chk-view-mode" type="checkbox" class="w-3.5 h-3.5 accent-slate-900 cursor-pointer">
+                            <span><span id="txt-view-mode">Dark</span></span>
+                        </label>
+                        <button id="btn-info" class="p-2 w-9 bg-white hover:bg-slate-50 text-slate-900 border-slate-200 rounded-full border text-[calc(12px*var(--fs))] font-medium transition" title="Learning outcomes and the physics" aria-label="Learning outcomes">
+                            <i class="fa-solid fa-circle-info"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Explainer modal -->
+    <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div id="info-backdrop" class="absolute inset-0 bg-slate-900/50"></div>
+        <div class="relative w-full max-w-2xl max-h-[86vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div class="shrink-0 border-b border-slate-200 px-5 py-3 flex items-start justify-between gap-4">
+                <div>
+                    <h2 class="text-[18px] font-bold text-slate-800">Breadboard &mdash; The Hidden Rows and What a Circuit Needs</h2>
+                    <p class="text-[14px] text-slate-500">A board with 830 holes and only about 130 actual connections</p>
+                </div>
+                <button id="info-close" aria-label="Close"
+                        class="shrink-0 w-7 h-7 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition text-[24px] leading-none">&times;</button>
+            </div>
+
+            <div class="overflow-y-auto px-5 py-4 text-[16px] text-slate-700 leading-relaxed space-y-4">
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">1. The board is not a grid of holes</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>Every hole has a metal clip behind it, and the clips are <b>joined in strips of five</b>. Push two wires into the same row of five and they are connected &mdash; not because they touch, but because one strip of springy metal is gripping both.</li>
+                        <li>Turn on <b>Links</b> and the plastic goes see-through. What looks like 830 separate holes is really about 130 strips, and every one of them is a decision somebody made when the board was moulded.</li>
+                        <li>The strips run <b>across</b> the board, five holes at a time. They do <b>not</b> run along it. Two parts in the same column are connected; two parts in the same long row are not.</li>
+                        <li>Down the middle is a <b>channel</b>, and the strips stop dead at it. The left five and the right five of the same line are two separate connections. That gap is not decoration &mdash; it is there so a chip can straddle it with its legs in different strips.</li>
+                        <li>Along the edges are the <b>power rails</b>, marked red and blue. These are the exception: they run the whole length of the board, so power is available anywhere along it. That is why the battery goes there and nowhere else.</li>
+                        <li><b>Nearly every circuit that does not work</b> fails for this one reason: two legs that were meant to be joined are in different strips, or two that were meant to be separate are sharing one.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">2. A circuit is a loop, or it is nothing</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>Current does not get <i>used up</i> and it does not flow <i>out</i> to a component. It goes round: out of one terminal of the battery, through everything, and back into the other. Break the loop anywhere and it stops <b>everywhere</b>, instantly.</li>
+                        <li>That is all a <b>switch</b> is. It is a deliberate gap you can close. There is nothing else in it.</li>
+                        <li>Open the switch and watch the current reading go to zero &mdash; not the LED first and the resistor after. The whole loop stops at once.</li>
+                        <li>In a series loop the current is <b>the same at every point</b>. There is nowhere else for it to go. Put the meter on <b>Current</b> and move the circuit around: the number is the number, wherever in the loop you break in.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">3. Ohm's law, and what the resistor is for</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><span class="mono">V = I &times; R</span>. Rearranged the way you will actually use it: <span class="mono">I = V &divide; R</span>. More push, more current; more resistance, less current.</li>
+                        <li>Set the circuit to <b>LED</b>, put the meter <b>Across the resistor</b>, and turn the <b>Knob</b>. Watch the volts across it and the current in the loop move together, always in the same ratio &mdash; that ratio <i>is</i> the resistance.</li>
+                        <li>The resistor's colour bands in the model are the <b>real code</b> for whatever value you have set. Change the value and watch the bands change: brown-black-brown is 100&nbsp;&Omega;, red-red-brown is 220, yellow-violet-brown is 470.</li>
+                        <li>A resistor does not "protect" by magic. It takes some of the voltage for itself, and what it takes it turns into <b>heat</b>. Power is <span class="mono">P = V &times; I</span>, and every milliwatt of it leaves as warmth.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">4. Why an LED must never go straight across a battery</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>An LED is not a resistor. Below about <b>1.8 V</b> it passes almost nothing; above it, the current climbs almost vertically. It has no interest in limiting itself.</li>
+                        <li>So the current is set by <i>everything else in the loop</i>: <span class="mono">I = (V<sub>supply</sub> &minus; V<sub>f</sub>) &divide; R</span>. On 6 V through 220 &Omega; that is about 19 mA, which is exactly what a 5 mm LED wants.</li>
+                        <li>Now wind the resistor to <b>0</b> and close the switch. There is nothing to set the current but the battery's own internal resistance, the reading goes to hundreds of milliamps, and the LED <b>burns out</b> &mdash; in the model as in life, in well under a second.</li>
+                        <li>It is worth doing once. The number on screen is the point: 20 mA is normal, 60 mA is fatal, and there is nothing in between to warn you.</li>
+                        <li>An LED is also a <b>one-way</b> part. Press <b>Turn LED Round</b> and it simply stops &mdash; no light, no current, no damage. The long leg goes to the positive rail; that is the only rule to remember.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">5. Series and parallel: the difference that matters</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>Put <b>2 LEDs</b> on the board and switch between the two wirings with everything else left alone.</li>
+                        <li><b>Series:</b> one loop through both. The same current goes through each, and they <b>share the voltage</b> &mdash; about 1.8 V each. On a 3 V battery there is nothing left over and both stay dark. That is not a fault; it is arithmetic.</li>
+                        <li><b>Parallel:</b> two loops side by side. Both LEDs now have the <b>same voltage</b> across them &mdash; about 1.8 V each &mdash; so both light even on a small battery, which series could not manage.</li>
+                        <li><b>But look at the current.</b> The two LEDs are sharing <i>one</i> resistor, and that resistor is what decides the total. So the current splits: about 9 mA each instead of 18, and both are dimmer than a single LED would have been. Adding a second lamp did not double the current, because nothing let it.</li>
+                        <li>That is exactly why each LED in a real circuit gets <b>its own resistor</b>. Share one between them and they share the current too &mdash; and if the two LEDs are not identical, the greedier one takes more than its half and the other stays dim.</li>
+                        <li>The rule underneath: series adds resistance (<span class="mono">R = R<sub>1</sub> + R<sub>2</sub></span>), parallel reduces it (<span class="mono">1/R = 1/R<sub>1</sub> + 1/R<sub>2</sub></span>). Two paths are easier than one.</li>
+                        <li>This is why the lights in a house are in <b>parallel</b>. In series, switching one off would kill them all, and each would only get a share of the mains.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">6. The motor: a load that pushes back</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li>A spinning motor generates a voltage of its own, <b>against</b> the supply &mdash; the back-EMF. That is what stops it drawing enormous current once it is up to speed.</li>
+                        <li>Hold it still and there is no back-EMF at all, so the current is only limited by the winding's own small resistance. <b>A stalled motor draws far more current than a running one</b>, and that is how motors burn out.</li>
+                        <li>Try feeding the motor through 470 &Omega;. It will not even start &mdash; the resistor drops nearly all the voltage before the motor gets any. A motor needs <b>current</b>, not just volts, which is exactly why you cannot run one from the same resistor you would use for an LED.</li>
+                        <li>Wind the <b>Knob</b> down slowly with the motor running and find the speed where it gives up. It does not fade away gently; it stops.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">7. Measuring: across, or through</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Voltage is a difference between two points</b>, so a voltmeter goes <b>across</b> a component, touching both sides, with the circuit left alone.</li>
+                        <li><b>Current is a flow</b>, so an ammeter has to be <b>in</b> the loop &mdash; you break the circuit and let the current run through the meter. Watch the probes move when you switch the meter to <b>Current</b>: they go into the loop, not across it.</li>
+                        <li>Add up the voltages across the resistor and the LED and you get the supply voltage back. Every volt the battery provides is used up somewhere by the time you get back to it. That is Kirchhoff's voltage law, and you can read it straight off the meter.</li>
+                        <li>The supply reading is the <b>terminal</b> voltage, not the number printed on the battery. Under a heavy load it sags, because the battery has resistance of its own inside it.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">8. Try this</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>Find the joined holes.</b> With Links on and the View set to Top, count how many separate strips there are in one column. Now work out why a part with both legs in the <i>same</i> strip does nothing at all.</li>
+                        <li><b>Predict, then check.</b> 6 V, 220 &Omega;, one LED. Work out the current on paper first: subtract the 1.8 V the LED takes, divide what is left by 220. Then close the switch and see how close you were.</li>
+                        <li><b>Kirchhoff by hand.</b> Read the volts across the resistor, then across the LED. Add them. Compare with the supply reading. Try to make them not add up.</li>
+                        <li><b>Two LEDs on a small battery.</b> Set the battery to 3 V and put two LEDs in series. Explain the darkness using nothing but the 1.8 V figure. Now switch to parallel without touching anything else.</li>
+                        <li><b>Kill one.</b> Wind the resistor to zero on a 9 V battery and watch the current. Then do the arithmetic: at that current, how many times the rated 20 mA is the LED being asked to pass?</li>
+                        <li><b>Make the motor refuse.</b> Start with the knob wide open and the motor running, then wind it up until it stops. Read the current at the moment it dies, and again just after.</li>
+                    </ul>
+                </section>
+
+                <details class="border-t border-slate-200 pt-3">
+                    <summary class="cursor-pointer font-bold text-slate-800">The numbers, and what is left out</summary>
+                    <div class="mt-2 space-y-2 text-[15px]">
+                        <div>
+                            <p class="mono text-slate-900">I = (V &minus; V<sub>f</sub>) &divide; (R + r<sub>internal</sub>)</p>
+                            <p class="text-slate-500">The current in an LED loop. V<sub>f</sub> is taken as 1.8 V for a red LED.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">V<sub>terminal</sub> = EMF &minus; I &times; r<sub>internal</sub></p>
+                            <p class="text-slate-500">Why the supply reading sags the moment you ask for current.</p>
+                        </div>
+                        <div>
+                            <p class="mono text-slate-900">V = I&nbsp;R<sub>armature</sub> + k&nbsp;&omega;</p>
+                            <p class="text-slate-500">The motor. The second term is the back-EMF, and it is zero when stalled.</p>
+                        </div>
+
+                        <div class="border-t border-slate-200 pt-2">
+                            <p class="font-bold text-slate-800 mb-1">Assumptions, and what is left out</p>
+                            <ul class="list-disc pl-5 space-y-1 text-slate-500">
+                                <li>The LED is modelled as a fixed forward voltage plus a small series resistance. A real diode follows an exponential curve, and its forward voltage shifts with both current and temperature.</li>
+                                <li>Burn-out is modelled as heating over time above a threshold current. A real LED dies by degrees &mdash; it dims and shifts colour long before it fails outright &mdash; and a brief overload it would survive is treated here as cumulative.</li>
+                                <li>The battery is an ideal EMF behind a fixed internal resistance. A real cell's internal resistance rises as it discharges, and nothing here ever goes flat.</li>
+                                <li>The motor is a steady-state model with viscous friction and a fixed load. Starting current, brush arcing, cogging and the inductive kick when the switch opens are all left out &mdash; the last of these being exactly why a real motor circuit needs a flyback diode.</li>
+                                <li>The meter is perfect: infinite resistance across a component, none at all in the loop. Real meters are neither, which is why a cheap ammeter changes the very current it is measuring.</li>
+                                <li>Wires and the board's own strips are treated as having no resistance. On a real breadboard the contacts are worth a fraction of an ohm each, and a tired board is worth a great deal more.</li>
+                                <li>The board is drawn as a half-size 400-point board with the strips laid out as they really are, but the components are placed for clarity rather than to a real layout you could copy hole for hole.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </details>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        // app.js clears the loading veil itself once it has something to
+        // show. This only steps in when a dependency never arrived, and it
+        // styles itself inline on purpose - app.css may be the missing file.
+        (function () {
+            function check() {
+                if (!window.__deps.length) return;
+                var seen = {}, list = [];
+                window.__deps.forEach(function (u) {
+                    var n = u.split('/').slice(-2).join('/');
+                    if (!seen[n]) { seen[n] = 1; list.push(n); }
+                });
+                var veil = document.getElementById('loader');
+                if (veil) veil.style.display = 'none';
+                var d = document.createElement('div');
+                d.setAttribute('style', 'position:fixed;inset:0;z-index:99999;display:flex;' +
+                    'align-items:center;justify-content:center;padding:32px;background:#f1f5f9;' +
+                    'color:#0f172a;text-align:center;font:14px/1.7 -apple-system,' +
+                    'BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif');
+                d.innerHTML = '<div><p style="font-weight:700;margin:0 0 8px">' +
+                    'This page could not load everything it needs.</p>' +
+                    '<p style="margin:0;color:#475569">Missing: ' + list.join(', ') + '</p>' +
+                    '<p style="margin:12px 0 0;color:#475569">Keep index.html, app.css, app.js ' +
+                    'and the vendor folder together in the same directory.</p></div>';
+                document.body.appendChild(d);
+            }
+            if (document.readyState === 'complete') check();
+            else addEventListener('load', check);
+        })();
+    </script>
+</body>
+</html>
